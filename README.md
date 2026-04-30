@@ -1,4 +1,3 @@
-
 # Neuro Habit
 
 Neuro Habit is a personal behavior and wellness tracking app focused on helping users build consistent daily routines. The app combines habit tracking, mood logging, activity insights, and gentle reminders to support long-term progress.
