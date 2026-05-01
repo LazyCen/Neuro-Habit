@@ -1,32 +1,78 @@
 # Neuro Habit
 
-Neuro Habit is a personal behavior and wellness tracking app focused on helping users build consistent daily routines. The app combines habit tracking, mood logging, activity insights, and gentle reminders to support long-term progress.
+Neuro Habit is a personal behavior and wellness tracking application focused on helping users build consistent daily routines. The app combines habit tracking, mood logging, activity insights, and gentle reminders to support long-term progress.
 
 ## Who It Is For
 
 Neuro Habit is designed for students, professionals, workers, and anyone who wants a practical system to stay consistent, focused, and mentally aware throughout busy daily life. It is especially useful for people who want to turn goals into repeatable routines without using complex productivity tools.
 
-## Purpose
+## Key Features
 
-The purpose of Neuro Habit is to make self-improvement measurable and sustainable by giving users a simple daily system to:
+- Habit Tracking: Monitor daily tasks and long-term consistency.
+- Mood Logging: Keep a record of emotional well-being and personal notes.
+- Activity Insights: View trends and performance data via interactive charts.
+- Smart Reminders: Stay accountable with timely notifications.
+- Health Integration: Sync data with Health Connect for a holistic view of wellness.
 
-- Track habits and completion progress
-- Log mood and personal notes
-- View activity trends and performance insights
-- Stay accountable with reminder notifications
+## Tech Stack
 
-## Inspiration
+- Frontend: React Native with Expo (Development Client)
+- State Management: React Hooks and Context API
+- Navigation: React Navigation
+- UI Components: custom components with React Native Reanimated for smooth transitions
+- Data Visualization: Victory Native
+- Backend & Database: Supabase
+- AI Integration: OpenAI SDK
+- Health Data: React Native Health Connect
 
-This project is inspired by the book *Neuro Habits*, with a focus on the idea that small repeated actions can create meaningful long-term behavioral change.
+## Getting Started
+
+### Prerequisites
+
+- Node.js (LTS version)
+- npm or yarn
+- Android Studio (for Android development)
+- Expo Go or a Custom Development Build
+
+### Installation
+
+1. Clone the repository:
+   git clone https://github.com/LazyCen/Neuro-Habit.git
+
+2. Navigate to the project directory:
+   cd Neuro-Habit/neuro-habit
+
+3. Install dependencies:
+   npm install
+
+4. Set up environment variables:
+   Create a .env file in the neuro-habit directory and add your Supabase and OpenAI credentials.
+
+### Running the App
+
+To start the development server:
+npm run start
+
+To run on an Android device/emulator:
+npm run android
 
 ## APK Build (Install-Ready)
 
-The Android release APKs are available at:
+The project is configured to generate separate builds for different CPU architectures to optimize file size. Release APKs are located in:
+neuro-habit/android/app/build/outputs/apk/release/
 
-- `neuro-habit/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk` (recommended for most modern Android phones)
-- `neuro-habit/android/app/build/outputs/apk/release/app-armeabi-v7a-release.apk` (for older 32-bit Android devices)
+Available Architectures:
 
-Install using ADB:
+- app-arm64-v8a-release.apk (Recommended for most modern Android phones)
+- app-armeabi-v7a-release.apk (For older 32-bit Android devices)
+- app-x86-release.apk (For 32-bit emulators)
+- app-x86_64-release.apk (For 64-bit emulators and some Chromebooks)
 
-`adb install -r "c:\Neuro Habit\neuro-habit\android\app\build\outputs\apk\release\app-arm64-v8a-release.apk"`
+### Installing via ADB
 
+To install the arm64 version on a connected device:
+adb install -r "neuro-habit/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk"
+
+## Inspiration
+
+This project is inspired by the book Neuro Habits, with a focus on the idea that small repeated actions can create meaningful long-term behavioral change.
