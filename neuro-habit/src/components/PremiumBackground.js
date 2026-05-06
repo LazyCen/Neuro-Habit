@@ -19,7 +19,7 @@ export default function PremiumBackground() {
           </LinearGradient>
           <LinearGradient id="gradSecondary" x1="0%" y1="0%" x2="100%" y2="100%">
             <Stop offset="0%" stopColor={colors.secondary} stopOpacity="0.1" />
-            <Stop offset="100%" stopColor={colors.accent || '#8B5CF6'} stopOpacity="0.02" />
+            <Stop offset="100%" stopColor={colors.accent} stopOpacity="0.02" />
           </LinearGradient>
         </Defs>
         

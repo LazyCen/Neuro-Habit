@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { supabase } from './supabaseClient';
@@ -7,6 +8,8 @@ const LOCAL_MOOD_LOGS_KEY = 'local_mood_logs_v1';
 const PENDING_MOODS_KEY = 'pending_moods_v1';
 const PENDING_METRICS_KEY = 'pending_metrics_v1';
 const CACHED_INSIGHTS_KEY = 'cached_insights_v1';
+
+let timeOffsetMs = 0;
 
 function trimTrailingSlash(url) {
   return url.replace(/\/+$/, '');
@@ -35,13 +38,13 @@ function getApiBaseUrls() {
   return [...new Set(urls)];
 }
 
-async function fetchFromBackend(path, options) {
+async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
   const baseUrls = getApiBaseUrls();
   let lastError = null;
 
   for (const baseUrl of baseUrls) {
     try {
-      const response = await fetch(`${baseUrl}${path}`, options);
+      const response = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
       if (!response.ok) {
         lastError = new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
         continue;
@@ -54,7 +57,6 @@ async function fetchFromBackend(path, options) {
 
   throw lastError || new Error(`No backend base URL worked for ${path}`);
 }
-
 async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -65,29 +67,73 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
   }
 }
 
-async function getArrayStorage(key) {
+// Sensitive health-data queues are persisted in the OS-level encrypted
+// keystore (Android Keystore / iOS Keychain) via expo-secure-store.
+async function getSecureArray(key) {
   try {
-    const raw = await AsyncStorage.getItem(key);
+    const raw = await SecureStore.getItemAsync(key);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    console.error(`Error reading ${key}:`, e);
+    console.error(`[SecureStore] Error reading ${key}:`, e);
     return [];
   }
 }
 
-async function setArrayStorage(key, value) {
+async function setSecureArray(key, value) {
   try {
-    await AsyncStorage.setItem(key, JSON.stringify(value));
+    await SecureStore.setItemAsync(key, JSON.stringify(value));
   } catch (e) {
-    console.error(`Error writing ${key}:`, e);
+    console.error(`[SecureStore] Error writing ${key}:`, e);
   }
 }
 
+// Alias kept for call-sites that previously used AsyncStorage helpers.
+const getArrayStorage = getSecureArray;
+const setArrayStorage = setSecureArray;
+
 async function appendArrayStorage(key, value) {
-  const current = await getArrayStorage(key);
+  const current = await getSecureArray(key);
   current.push(value);
-  await setArrayStorage(key, current);
+  await setSecureArray(key, current);
+}
+
+// Data retention policy: Purge entries older than 30 days
+async function pruneOldLocalData() {
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  try {
+    // 1. Prune local mood history (offline fallback logs)
+    const localMoods = await getSecureArray(LOCAL_MOOD_LOGS_KEY);
+    const validLocalMoods = localMoods.filter((item) => {
+      const time = new Date(item.created_at || item.queuedAt || Date.now()).getTime();
+      return time >= thirtyDaysAgo;
+    });
+    if (validLocalMoods.length !== localMoods.length) {
+      await setSecureArray(LOCAL_MOOD_LOGS_KEY, validLocalMoods);
+    }
+
+    // 2. Prune pending queues that are hopelessly stale (avoid infinite retry loops)
+    const pendingMoods = await getSecureArray(PENDING_MOODS_KEY);
+    const validPendingMoods = pendingMoods.filter((item) => {
+      const time = new Date(item.queuedAt || Date.now()).getTime();
+      return time >= thirtyDaysAgo;
+    });
+    if (validPendingMoods.length !== pendingMoods.length) {
+      await setSecureArray(PENDING_MOODS_KEY, validPendingMoods);
+    }
+
+    const pendingMetrics = await getSecureArray(PENDING_METRICS_KEY);
+    const validPendingMetrics = pendingMetrics.filter((item) => {
+      const time = new Date(item.queuedAt || Date.now()).getTime();
+      return time >= thirtyDaysAgo;
+    });
+    if (validPendingMetrics.length !== pendingMetrics.length) {
+      await setSecureArray(PENDING_METRICS_KEY, validPendingMetrics);
+    }
+  } catch (error) {
+    console.error('Error during data retention pruning:', error);
+  }
 }
 
 async function saveMoodLocally(mood, note) {
@@ -99,10 +145,11 @@ async function saveMoodLocally(mood, note) {
   };
 
   try {
-    const existing = await AsyncStorage.getItem(LOCAL_MOOD_LOGS_KEY);
+    // Health data persisted in the encrypted keystore.
+    const existing = await SecureStore.getItemAsync(LOCAL_MOOD_LOGS_KEY);
     const logs = existing ? JSON.parse(existing) : [];
     logs.push(entry);
-    await AsyncStorage.setItem(LOCAL_MOOD_LOGS_KEY, JSON.stringify(logs));
+    await SecureStore.setItemAsync(LOCAL_MOOD_LOGS_KEY, JSON.stringify(logs));
   } catch (storageError) {
     console.error('Error saving mood locally:', storageError);
   }
@@ -192,6 +239,8 @@ async function saveMetricsViaSupabase(steps, screenTime) {
 
 async function cacheInsights(insights) {
   try {
+    // Insights cache can be large (AI response data); AsyncStorage is fine
+    // here as it contains no auth tokens or PII beyond what is in the DB.
     await AsyncStorage.setItem(CACHED_INSIGHTS_KEY, JSON.stringify(insights));
   } catch (e) {
     console.error('Error caching insights:', e);
@@ -251,6 +300,23 @@ async function createHabitViaSupabase(name) {
 }
 
 export const backendService = {
+  async fetchTrustedTime() {
+    try {
+      const response = await fetchFromBackend('/time');
+      if (response && response.utc_time) {
+        const serverTime = new Date(response.utc_time).getTime();
+        const localTime = Date.now();
+        timeOffsetMs = serverTime - localTime;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch trusted time, using local clock', e);
+    }
+  },
+
+  getTrustedTime() {
+    return Date.now() + timeOffsetMs;
+  },
+
   async isOnline() {
     const baseUrls = getApiBaseUrls();
     for (const baseUrl of baseUrls) {
@@ -270,12 +336,15 @@ export const backendService = {
       const parsed = raw ? JSON.parse(raw) : [];
       return Array.isArray(parsed) ? parsed : [];
     } catch (e) {
-      console.error('Error reading cached insights:', e);
+      console.error('[AsyncStorage] Error reading cached insights:', e);
       return [];
     }
   },
 
   async syncPendingData() {
+    // Enforce data retention policy before syncing
+    await pruneOldLocalData();
+
     const isOnline = await this.isOnline();
     if (!isOnline) return;
 
@@ -381,5 +450,18 @@ export const backendService = {
         };
       }
     }
+  },
+
+  async deleteAccount() {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error("No authenticated session");
+
+    return await fetchFromBackend('/account', {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
   }
 };

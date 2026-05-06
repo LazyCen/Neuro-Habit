@@ -6,10 +6,10 @@ import {
   TextInput, 
   TouchableOpacity, 
   ActivityIndicator, 
-  KeyboardAvoidingView,
   Platform,
   Dimensions
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp, FadeOutUp } from 'react-native-reanimated';
 import { supabase } from '../services/supabaseClient';
@@ -91,9 +91,10 @@ export default function UsernameScreen() {
         message={modalConfig.message}
         onConfirm={() => setModalConfig({ visible: false, title: "", message: "" })}
       />
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={themedStyles.keyboardView}
+      <KeyboardAwareScrollView 
+        contentContainerStyle={themedStyles.keyboardView}
+        enableOnAndroid={true}
+        bounces={false}
       >
         <Animated.View 
           entering={FadeInDown.duration(800).springify()}
@@ -139,7 +140,7 @@ export default function UsernameScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color={colors.white} />
             ) : (
               <Text style={themedStyles.buttonText}>Get Started</Text>
             )}
@@ -153,7 +154,7 @@ export default function UsernameScreen() {
             <Text style={themedStyles.skipText}>Set later</Text>
           </TouchableOpacity>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </View>
   );
 }
@@ -178,7 +179,7 @@ const styles = (colors, isDark) => StyleSheet.create({
     alignItems: 'center',
     borderWidth: !isDark ? 1 : 0,
     borderColor: colors.border,
-    shadowColor: '#000',
+    shadowColor: colors.black,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.2,
     shadowRadius: 20,
@@ -231,13 +232,13 @@ const styles = (colors, isDark) => StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: !isDark ? 'transparent' : 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: !isDark ? colors.transparent : colors.cardHighlight,
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 60,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: !isDark ? colors.border : 'transparent',
+    borderColor: !isDark ? colors.border : colors.transparent,
     width: '100%',
   },
   inputIcon: {
@@ -267,7 +268,7 @@ const styles = (colors, isDark) => StyleSheet.create({
     opacity: 0.7,
   },
   buttonText: {
-    color: 'white',
+    color: colors.white,
     fontSize: 18,
     fontWeight: 'bold',
   },

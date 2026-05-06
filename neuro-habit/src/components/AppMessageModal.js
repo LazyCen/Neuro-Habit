@@ -46,7 +46,7 @@ const createStyles = (colors) =>
   StyleSheet.create({
     overlay: {
       flex: 1,
-      backgroundColor: "rgba(0,0,0,0.45)",
+      backgroundColor: colors.cardHighlight, // Replaced rgba(0,0,0,0.45) with theme token
       justifyContent: "center",
       padding: 24,
     },
@@ -99,7 +99,7 @@ const createStyles = (colors) =>
       backgroundColor: colors.danger,
     },
     confirmText: {
-      color: "#fff",
+      color: colors.white,
       fontWeight: "700",
     },
   });

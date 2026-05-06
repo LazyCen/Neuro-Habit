@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, TextInput } from "react-native";
+import React, { useEffect, useState, useRef } from "react";
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import Card from "../components/Card";
@@ -11,6 +12,8 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring, withSequence } 
 import PremiumBackground from "../components/PremiumBackground";
 import { supabase } from "../services/supabaseClient";
 import AppMessageModal from "../components/AppMessageModal";
+import * as Haptics from 'expo-haptics';
+import { getFriendlyErrorMessage } from "../utils/errorMapper";
 
 const LOCAL_HABITS_KEY = "local_habits_v1";
 const HABIT_META_KEY = "habit_meta_v2";
@@ -22,6 +25,10 @@ export default function HabitScreen() {
   const [newHabit, setNewHabit] = useState("");
   const [modalConfig, setModalConfig] = useState({ visible: false, title: "", message: "" });
   const themedStyles = styles(colors);
+
+  // Per-habit debounce timers and in-flight abort controllers to prevent race conditions
+  const pendingTogglesRef = useRef({});
+  const abortControllersRef = useRef({});
 
   useEffect(() => {
     loadHabits();
@@ -71,7 +78,7 @@ export default function HabitScreen() {
   };
 
   const processHabitsWithMeta = (rawHabits, metaMap) => {
-    const nowMs = Date.now();
+    const nowMs = backendService.getTrustedTime();
     let metaChanged = false;
 
     const processed = rawHabits.map((habit) => {
@@ -139,91 +146,154 @@ export default function HabitScreen() {
 
     const { data, error } = remoteRes;
     let allHabits = [];
+    const activeHabitIds = new Set();
 
     if (!error && Array.isArray(data)) {
-      const remoteHabits = data.map((habit) => ({
-        id: habit.id,
-        name: habit.name ?? habit.title ?? "Untitled Habit",
-        completed: Boolean(habit.completed ?? habit.is_completed ?? false),
-        completedColumn: Object.prototype.hasOwnProperty.call(habit, "completed")
-          ? "completed"
-          : Object.prototype.hasOwnProperty.call(habit, "is_completed")
-            ? "is_completed"
-            : null,
-        streak: habit.streak || 0,
-        lastCompletedAt: habit.last_completed_at || null,
-        localOnly: false,
-      }));
+      const remoteHabits = data.map((habit) => {
+        activeHabitIds.add(habit.id);
+        return {
+          id: habit.id,
+          name: habit.name ?? habit.title ?? "Untitled Habit",
+          completed: Boolean(habit.completed ?? habit.is_completed ?? false),
+          completedColumn: Object.prototype.hasOwnProperty.call(habit, "completed")
+            ? "completed"
+            : Object.prototype.hasOwnProperty.call(habit, "is_completed")
+              ? "is_completed"
+              : null,
+          streak: habit.streak || 0,
+          lastCompletedAt: habit.last_completed_at || null,
+          localOnly: false,
+        };
+      });
       allHabits = [...remoteHabits, ...localHabits];
+      localHabits.forEach(h => activeHabitIds.add(h.id));
     } else {
       allHabits = localHabits;
+      localHabits.forEach(h => activeHabitIds.add(h.id));
     }
 
-    const { processed, metaChanged } = processHabitsWithMeta(allHabits, metaMap);
+    // Data retention policy: Purge habit metadata (streaks/history) that's > 30 days old or orphaned
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    let metaChanged = false;
+    for (const [habitId, meta] of Object.entries(metaMap)) {
+      const isOrphaned = !error && !activeHabitIds.has(habitId);
+      const isStale = meta.lastCompletedAt && new Date(meta.lastCompletedAt).getTime() < thirtyDaysAgo;
+      
+      if (isOrphaned || isStale) {
+        delete metaMap[habitId];
+        metaChanged = true;
+      }
+    }
+
+    const processResult = processHabitsWithMeta(allHabits, metaMap);
     
-    if (metaChanged) {
+    if (metaChanged || processResult.metaChanged) {
       await setHabitMeta(metaMap);
     }
 
-    setHabits(processed);
-    await syncStreakReminder(processed);
+    setHabits(processResult.processed);
+    await syncStreakReminder(processResult.processed);
   };
 
-  const toggleHabit = async (id) => {
-    const targetHabit = habits.find((h) => h.id === id);
-    if (!targetHabit) return;
+  const toggleHabit = (id) => {
+    // --- Optimistic UI: apply state change immediately ---
+    setHabits((prev) => {
+      const target = prev.find((h) => h.id === id);
+      if (!target) return prev;
+      const isNowCompleted = !target.completed;
+      const newStreak = isNowCompleted
+        ? (target.streak || 0) + 1
+        : Math.max(0, (target.streak || 0) - 1);
+      return prev.map((h) =>
+        h.id === id ? { ...h, completed: isNowCompleted, streak: newStreak } : h
+      );
+    });
 
-    const now = new Date().toISOString();
-    const isNowCompleted = !targetHabit.completed;
-    
-    const metaMap = await getHabitMeta();
-    const currentMeta = metaMap[id] || { streak: targetHabit.streak || 0, lastCompletedAt: null };
-
-    const newStreak = isNowCompleted
-      ? currentMeta.streak + 1
-      : Math.max(0, currentMeta.streak - 1);
-
-    const updatedHabit = {
-      ...targetHabit,
-      completed: isNowCompleted,
-      streak: newStreak,
-    };
-
-    metaMap[id] = {
-      streak: newStreak,
-      lastCompletedAt: isNowCompleted ? now : currentMeta.lastCompletedAt,
-    };
-    await setHabitMeta(metaMap);
-
-    const nextHabits = habits.map((h) => (h.id === id ? updatedHabit : h));
-    setHabits(nextHabits);
-    await syncStreakReminder(nextHabits);
-
-    if (targetHabit.localOnly) {
-      const nextLocalHabits = nextHabits.filter((h) => h.localOnly);
-      await setLocalHabits(nextLocalHabits);
-      return;
+    // --- Abort any in-flight Supabase request for this habit ---
+    if (abortControllersRef.current[id]) {
+      abortControllersRef.current[id].abort();
     }
 
-    const updatePayload = {
-      streak: newStreak,
-      last_completed_at: isNowCompleted ? now : currentMeta.lastCompletedAt
-    };
-    if (updatedHabit.completedColumn) {
-      updatePayload[updatedHabit.completedColumn] = updatedHabit.completed;
+    // --- Debounce: cancel previous pending timer for this habit ---
+    if (pendingTogglesRef.current[id]) {
+      clearTimeout(pendingTogglesRef.current[id]);
     }
 
-    if (Object.keys(updatePayload).length > 0) {
-      const { error } = await supabase
-        .from("habits")
-        .update(updatePayload)
-        .eq("id", id);
+    // --- Schedule the actual backend sync after debounce window ---
+    pendingTogglesRef.current[id] = setTimeout(async () => {
+      delete pendingTogglesRef.current[id];
 
-      if (error) {
-        // We only revert the remote change on DB failure, but streak is preserved locally
-        setHabits(habits);
-      }
-    }
+      // Read the latest committed state for this habit
+      setHabits((currentHabits) => {
+        const latestHabit = currentHabits.find((h) => h.id === id);
+        if (!latestHabit) return currentHabits;
+
+        const controller = new AbortController();
+        abortControllersRef.current[id] = controller;
+
+        const now = new Date(backendService.getTrustedTime()).toISOString();
+
+        // Persist meta locally
+        (async () => {
+          try {
+            const metaMap = await getHabitMeta();
+            const currentMeta = metaMap[id] || { streak: latestHabit.streak, lastCompletedAt: null };
+            metaMap[id] = {
+              streak: latestHabit.streak,
+              lastCompletedAt: latestHabit.completed ? now : currentMeta.lastCompletedAt,
+            };
+            await setHabitMeta(metaMap);
+
+            if (latestHabit.localOnly) {
+              // Persist local-only habits to AsyncStorage
+              setHabits((h) => {
+                const localOnly = h.filter((x) => x.localOnly);
+                setLocalHabits(localOnly).catch(() => {});
+                return h;
+              });
+              return;
+            }
+
+            // Sync to Supabase (abortable)
+            const updatePayload = {
+              streak: latestHabit.streak,
+              last_completed_at: latestHabit.completed ? now : currentMeta.lastCompletedAt,
+            };
+            if (latestHabit.completedColumn) {
+              updatePayload[latestHabit.completedColumn] = latestHabit.completed;
+            }
+
+            if (controller.signal.aborted) return;
+
+            const { error } = await supabase
+              .from("habits")
+              .update(updatePayload)
+              .eq("id", id)
+              .abortSignal(controller.signal);
+
+            if (error && !controller.signal.aborted) {
+              console.error('[HabitToggle] Supabase sync failed:', error.message);
+            }
+          } catch (err) {
+            if (!controller.signal.aborted) {
+              console.error('[HabitToggle] Unexpected error during sync:', err);
+            }
+          } finally {
+            if (abortControllersRef.current[id] === controller) {
+              delete abortControllersRef.current[id];
+            }
+          }
+        })();
+
+        return currentHabits; // no state mutation in this setHabits call
+      });
+
+      // Sync notification reminder with final state
+      setHabits((h) => {
+        syncStreakReminder(h).catch(() => {});
+        return h;
+      });
+    }, 300);
   };
 
   const addHabit = async () => {
@@ -246,14 +316,11 @@ export default function HabitScreen() {
     } else {
       const backendReason = result?.details?.backend;
       const supabaseReason = result?.details?.supabase;
-      const reason =
-        supabaseReason ||
-        backendReason ||
-        result?.message ||
-        "Unknown server error";
+      const rawErrorString = supabaseReason || backendReason || result?.message || "Unknown server error";
+      const friendlyError = getFriendlyErrorMessage(rawErrorString, "We couldn't save your habit to the cloud right now.");
 
       const localHabit = {
-        id: `local-${Date.now()}`,
+        id: `local-${backendService.getTrustedTime()}`,
         name: newHabit.trim(),
         completed: false,
         completedColumn: null,
@@ -270,7 +337,7 @@ export default function HabitScreen() {
       setModalConfig({
         visible: true,
         title: "Saved Locally",
-        message: `Cloud save failed: ${reason}\n\nHabit was added on this device. Sign in/sync later to back it up online.`,
+        message: `${friendlyError}\n\nHabit was added on this device. Sign in/sync later to back it up online.`,
       });
     }
   };
@@ -296,7 +363,7 @@ export default function HabitScreen() {
             onChangeText={setNewHabit}
           />
           <TouchableOpacity style={themedStyles.addButton} onPress={addHabit}>
-            <Ionicons name="add" size={24} color="#FFF" />
+            <Ionicons name="add" size={24} color={colors.white} />
           </TouchableOpacity>
         </View>
 
@@ -327,6 +394,7 @@ function HabitItem({ item, onToggle, colors }) {
   }));
 
   const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     scale.value = withSequence(withSpring(1.05), withSpring(1));
     onToggle(item.id);
   };

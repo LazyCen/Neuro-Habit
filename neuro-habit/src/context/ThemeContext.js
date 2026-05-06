@@ -1,26 +1,28 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import React, { createContext, useState, useContext, useCallback, useMemo } from 'react';
 import { darkColors, lightColors } from '../theme/colors';
 
 const ThemeContext = createContext();
 
 export const ThemeProvider = ({ children }) => {
-  const systemColorScheme = useColorScheme();
-  const [isDark, setIsDark] = useState(systemColorScheme === 'dark');
+  const [isDark, setIsDark] = useState(false); // Default to light theme
 
-  useEffect(() => {
-    // Follow device preference: dark stays dark, light stays light.
-    setIsDark(systemColorScheme === 'dark');
-  }, [systemColorScheme]);
+  // Stable reference — does not change between renders
+  const toggleTheme = useCallback(() => {
+    setIsDark((prev) => !prev);
+  }, []);
 
-  const toggleTheme = () => {
-    setIsDark(!isDark);
-  };
-
-  const theme = isDark ? darkColors : lightColors;
+  // Memoized value — new object reference only when isDark changes
+  const value = useMemo(
+    () => ({
+      isDark,
+      toggleTheme,
+      theme: isDark ? darkColors : lightColors,
+    }),
+    [isDark, toggleTheme]
+  );
 
   return (
-    <ThemeContext.Provider value={{ isDark, toggleTheme, theme }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   );

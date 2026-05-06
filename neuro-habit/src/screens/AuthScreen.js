@@ -7,11 +7,10 @@ import {
   TouchableOpacity, 
   ActivityIndicator, 
   Dimensions,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   Modal
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Animated, { 
@@ -175,9 +174,12 @@ export default function AuthScreen() {
   }
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardAwareScrollView 
       style={themedStyles.container}
+      contentContainerStyle={themedStyles.scrollContent}
+      bounces={false}
+      enableOnAndroid={true}
+      extraScrollHeight={Platform.OS === 'ios' ? 20 : 0}
     >
       <AppMessageModal
         visible={modalConfig.visible}
@@ -219,196 +221,193 @@ export default function AuthScreen() {
           </View>
         </View>
       </Modal>
-      <ScrollView contentContainerStyle={themedStyles.scrollContent} bounces={false} centerContent={true}>
-        {/* Abstract Background Shapes */}
-        <View style={themedStyles.bgDecor}>
-          <Svg height={height} width={width} style={StyleSheet.absoluteFill}>
-            <Defs>
-              <LinearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <Stop offset="0%" stopColor={PRIMARY} stopOpacity="0.2" />
-                <Stop offset="100%" stopColor={SECONDARY} stopOpacity="0.1" />
-              </LinearGradient>
-              <LinearGradient id="gradAccent" x1="0%" y1="0%" x2="100%" y2="100%">
-                <Stop offset="0%" stopColor={ACCENT} stopOpacity="0.15" />
-                <Stop offset="100%" stopColor={PRIMARY} stopOpacity="0.05" />
-              </LinearGradient>
-            </Defs>
-            <Circle cx={width * 0.9} cy={height * 0.1} r={width * 0.6} fill="url(#grad)" />
-            <Circle cx={width * 0.1} cy={height * 0.8} r={width * 0.5} fill="url(#gradAccent)" />
-            <Circle cx={width * 0.5} cy={height * 0.4} r={width * 0.4} fill={PRIMARY} opacity="0.03" />
-          </Svg>
-        </View>
 
-        <View style={themedStyles.main}>
-          {/* Header Section */}
-          <Animated.View 
-            entering={FadeInDown.duration(1000).springify()}
-            style={themedStyles.header}
-          >
-            <View style={themedStyles.logoCircle}>
-              <Ionicons name="pulse" size={40} color="white" />
-            </View>
-            <Text style={themedStyles.welcomeText}>
-              {isLogin ? 'Neuro Habit' : 'Join Us'}
+      {/* Abstract Background Shapes */}
+      <View style={themedStyles.bgDecor}>
+        <Svg height={height} width={width} style={StyleSheet.absoluteFill}>
+          <Defs>
+            <LinearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <Stop offset="0%" stopColor={PRIMARY} stopOpacity="0.2" />
+              <Stop offset="100%" stopColor={SECONDARY} stopOpacity="0.1" />
+            </LinearGradient>
+            <LinearGradient id="gradAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+              <Stop offset="0%" stopColor={ACCENT} stopOpacity="0.15" />
+              <Stop offset="100%" stopColor={PRIMARY} stopOpacity="0.05" />
+            </LinearGradient>
+          </Defs>
+          <Circle cx={width * 0.9} cy={height * 0.1} r={width * 0.6} fill="url(#grad)" />
+          <Circle cx={width * 0.1} cy={height * 0.8} r={width * 0.5} fill="url(#gradAccent)" />
+          <Circle cx={width * 0.5} cy={height * 0.4} r={width * 0.4} fill={PRIMARY} opacity="0.03" />
+        </Svg>
+      </View>
+
+      <View style={themedStyles.main}>
+        {/* Header Section */}
+        <Animated.View 
+          entering={FadeInDown.duration(1000).springify()}
+          style={themedStyles.header}
+        >
+          <View style={themedStyles.logoCircle}>
+            <Ionicons name="pulse" size={40} color={colors.white} />
+          </View>
+          <Text style={themedStyles.welcomeText}>
+            {isLogin ? 'Neuro Habit' : 'Join Us'}
+          </Text>
+          {isLogin && (
+            <Text style={themedStyles.subText}>
+              Sign in to access your dashboard
             </Text>
-            {isLogin && (
-              <Text style={themedStyles.subText}>
-                Sign in to access your dashboard
-              </Text>
-            )}
-          </Animated.View>
+          )}
+        </Animated.View>
 
-          {/* Login Card */}
-          <Animated.View 
-            entering={FadeInUp.delay(300).duration(1000).springify()}
-            style={themedStyles.card}
-          >
-            {!isLogin && (
-              <>
-                <View style={themedStyles.row}>
-                  <View style={[themedStyles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                    <Text style={themedStyles.label}>First Name</Text>
-                    <View style={themedStyles.inputWrapperCompact}>
-                      <TextInput
-                        style={themedStyles.input}
-                        placeholder="John"
-                        placeholderTextColor={TEXT_MUTED}
-                        value={firstName}
-                        onChangeText={setFirstName}
-                        selectionColor={PRIMARY}
-                        cursorColor={PRIMARY}
-                        underlineColorAndroid="transparent"
-                      />
-                    </View>
-                  </View>
-
-                  <View style={[themedStyles.inputGroup, { flex: 1 }]}>
-                    <Text style={themedStyles.label}>Last Name</Text>
-                    <View style={themedStyles.inputWrapperCompact}>
-                      <TextInput
-                        style={themedStyles.input}
-                        placeholder="Doe"
-                        placeholderTextColor={TEXT_MUTED}
-                        value={lastName}
-                        onChangeText={setLastName}
-                        selectionColor={PRIMARY}
-                        cursorColor={PRIMARY}
-                        underlineColorAndroid="transparent"
-                      />
-                    </View>
-                  </View>
-                </View>
-
-                <View style={themedStyles.inputGroupCompact}>
-                  <Text style={themedStyles.label}>Middle Name (Optional)</Text>
+        {/* Login Card */}
+        <Animated.View 
+          entering={FadeInUp.delay(300).duration(1000).springify()}
+          style={themedStyles.card}
+        >
+          {!isLogin && (
+            <>
+              <View style={themedStyles.row}>
+                <View style={[themedStyles.inputGroup, { flex: 1, marginRight: 10 }]}>
+                  <Text style={themedStyles.label}>First Name</Text>
                   <View style={themedStyles.inputWrapperCompact}>
                     <TextInput
                       style={themedStyles.input}
-                      placeholder="Quincy"
+                      placeholder="John"
                       placeholderTextColor={TEXT_MUTED}
-                      value={middleName}
-                      onChangeText={setMiddleName}
+                      value={firstName}
+                      onChangeText={setFirstName}
                       selectionColor={PRIMARY}
                       cursorColor={PRIMARY}
                       underlineColorAndroid="transparent"
                     />
                   </View>
                 </View>
-              </>
-            )}
 
-            <View style={isLogin ? themedStyles.inputGroup : themedStyles.inputGroupCompact}>
-              <Text style={themedStyles.label}>Email Address</Text>
-              <View style={isLogin ? themedStyles.inputWrapper : themedStyles.inputWrapperCompact}>
-                <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={themedStyles.icon} />
-                <TextInput
-                  style={themedStyles.input}
-                  placeholder="name@example.com"
-                  placeholderTextColor={TEXT_MUTED}
-                  value={email}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  onChangeText={setEmail}
-                  selectionColor={PRIMARY}
-                  cursorColor={PRIMARY}
-                  underlineColorAndroid="transparent"
-                />
+                <View style={[themedStyles.inputGroup, { flex: 1 }]}>
+                  <Text style={themedStyles.label}>Last Name</Text>
+                  <View style={themedStyles.inputWrapperCompact}>
+                    <TextInput
+                      style={themedStyles.input}
+                      placeholder="Doe"
+                      placeholderTextColor={TEXT_MUTED}
+                      value={lastName}
+                      onChangeText={setLastName}
+                      selectionColor={PRIMARY}
+                      cursorColor={PRIMARY}
+                      underlineColorAndroid="transparent"
+                    />
+                  </View>
+                </View>
               </View>
-            </View>
 
-            <View style={isLogin ? themedStyles.inputGroup : themedStyles.inputGroupCompact}>
-              <Text style={themedStyles.label}>Password</Text>
-              <View style={isLogin ? themedStyles.inputWrapper : themedStyles.inputWrapperCompact}>
-                <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={themedStyles.icon} />
-                <TextInput
-                  style={themedStyles.input}
-                  placeholder="••••••••"
-                  placeholderTextColor={TEXT_MUTED}
-                  value={password}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  onChangeText={setPassword}
-                  selectionColor={PRIMARY}
-                  cursorColor={PRIMARY}
-                  underlineColorAndroid="transparent"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                  <Ionicons 
-                    name={showPassword ? "eye-off-outline" : "eye-outline"} 
-                    size={18} 
-                    color={TEXT_MUTED} 
+              <View style={themedStyles.inputGroupCompact}>
+                <Text style={themedStyles.label}>Middle Name (Optional)</Text>
+                <View style={themedStyles.inputWrapperCompact}>
+                  <TextInput
+                    style={themedStyles.input}
+                    placeholder="Quincy"
+                    placeholderTextColor={TEXT_MUTED}
+                    value={middleName}
+                    onChangeText={setMiddleName}
+                    selectionColor={PRIMARY}
+                    cursorColor={PRIMARY}
+                    underlineColorAndroid="transparent"
                   />
-                </TouchableOpacity>
+                </View>
               </View>
+            </>
+          )}
+
+          <View style={isLogin ? themedStyles.inputGroup : themedStyles.inputGroupCompact}>
+            <Text style={themedStyles.label}>Email Address</Text>
+            <View style={isLogin ? themedStyles.inputWrapper : themedStyles.inputWrapperCompact}>
+              <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={themedStyles.icon} />
+              <TextInput
+                style={themedStyles.input}
+                placeholder="name@example.com"
+                placeholderTextColor={TEXT_MUTED}
+                value={email}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                onChangeText={setEmail}
+                selectionColor={PRIMARY}
+                cursorColor={PRIMARY}
+                underlineColorAndroid="transparent"
+              />
             </View>
+          </View>
 
-            {isLogin && (
-              <TouchableOpacity
-                style={themedStyles.forgotPass}
-                onPress={() => {
-                  setForgotEmail(email.trim());
-                  setShowForgotModal(true);
-                }}
-              >
-                <Text style={themedStyles.forgotText}>Forgot password?</Text>
+          <View style={isLogin ? themedStyles.inputGroup : themedStyles.inputGroupCompact}>
+            <Text style={themedStyles.label}>Password</Text>
+            <View style={isLogin ? themedStyles.inputWrapper : themedStyles.inputWrapperCompact}>
+              <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={themedStyles.icon} />
+              <TextInput
+                style={themedStyles.input}
+                placeholder="••••••••"
+                placeholderTextColor={TEXT_MUTED}
+                value={password}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                onChangeText={setPassword}
+                selectionColor={PRIMARY}
+                cursorColor={PRIMARY}
+                underlineColorAndroid="transparent"
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                <Ionicons 
+                  name={showPassword ? "eye-off-outline" : "eye-outline"} 
+                  size={18} 
+                  color={TEXT_MUTED} 
+                />
               </TouchableOpacity>
-            )}
+            </View>
+          </View>
 
-            <Animated.View style={animatedButtonStyle}>
-              <TouchableOpacity 
-                style={themedStyles.primaryButton}
-                onPress={isLogin ? handleSignIn : handleSignUp}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={themedStyles.buttonText}>{isLogin ? 'Sign In' : 'Create Account'}</Text>
-                )}
-              </TouchableOpacity>
-            </Animated.View>
+          {isLogin && (
+            <TouchableOpacity
+              style={themedStyles.forgotPass}
+              onPress={() => {
+                setForgotEmail(email.trim());
+                setShowForgotModal(true);
+              }}
+            >
+              <Text style={themedStyles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+          )}
 
-          </Animated.View>
-
-          {/* Footer */}
-          <Animated.View 
-            entering={FadeInUp.delay(600)}
-            style={[themedStyles.footer, !isLogin && { marginTop: 20 }]}
-          >
-            <Text style={themedStyles.footerText}>
-              {isLogin ? "Don't have an account?" : "Already have an account?"}
-            </Text>
-            <TouchableOpacity onPress={() => setIsLogin(!isLogin)}>
-              <Text style={themedStyles.footerLink}>
-                {isLogin ? ' Register Now' : ' Sign In'}
-              </Text>
+          <Animated.View style={animatedButtonStyle}>
+            <TouchableOpacity 
+              style={themedStyles.primaryButton}
+              onPress={isLogin ? handleSignIn : handleSignUp}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color={colors.white} />
+              ) : (
+                <Text style={themedStyles.buttonText}>{isLogin ? 'Sign In' : 'Create Account'}</Text>
+              )}
             </TouchableOpacity>
           </Animated.View>
 
+        </Animated.View>
 
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        {/* Footer */}
+        <Animated.View 
+          entering={FadeInUp.delay(600)}
+          style={[themedStyles.footer, !isLogin && { marginTop: 20 }]}
+        >
+          <Text style={themedStyles.footerText}>
+            {isLogin ? "Don't have an account?" : "Already have an account?"}
+          </Text>
+          <TouchableOpacity onPress={() => setIsLogin(!isLogin)}>
+            <Text style={themedStyles.footerLink}>
+              {isLogin ? ' Register Now' : ' Sign In'}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </View>
+    </KeyboardAwareScrollView>
   );
 }
 
@@ -444,11 +443,11 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: colors.border,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderColor: colors.border,
     marginBottom: 20,
   },
   logoCircleSmall: {
@@ -460,10 +459,10 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
   welcomeText: {
     fontSize: 32,
     fontWeight: '800',
-    color: !isDark ? colors.text : 'white',
+    color: !isDark ? colors.text : colors.white,
     textAlign: 'center',
     marginBottom: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.1)',
+    textShadowColor: colors.border,
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
@@ -473,7 +472,7 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
   },
   subText: {
     fontSize: 16,
-    color: !isDark ? colors.subtext : 'rgba(255, 255, 255, 0.9)',
+    color: !isDark ? colors.subtext : colors.text,
     textAlign: 'center',
     paddingHorizontal: 20,
   },
@@ -481,7 +480,7 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
     backgroundColor: CARD_BG,
     borderRadius: 24,
     padding: 24,
-    shadowColor: '#000',
+    shadowColor: colors.black,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.1,
     shadowRadius: 20,
@@ -509,22 +508,22 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: colors.cardHighlight,
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 56,
     borderWidth: 1,
-    borderColor: !isDark ? colors.border : 'transparent',
+    borderColor: !isDark ? colors.border : colors.transparent,
   },
   inputWrapperCompact: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: colors.cardHighlight,
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 48,
     borderWidth: 1,
-    borderColor: !isDark ? colors.border : 'transparent',
+    borderColor: !isDark ? colors.border : colors.transparent,
   },
   icon: {
     marginRight: 12,
@@ -559,7 +558,7 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
     elevation: 4,
   },
   buttonText: {
-    color: 'white',
+    color: colors.white,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -580,7 +579,7 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
 
   forgotOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: colors.cardHighlight,
     justifyContent: "center",
     padding: 24,
   },
@@ -636,7 +635,7 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
     paddingVertical: 9,
   },
   forgotSendText: {
-    color: "white",
+    color: colors.white,
     fontWeight: "700",
   }
 });

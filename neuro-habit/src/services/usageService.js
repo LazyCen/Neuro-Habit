@@ -10,8 +10,11 @@ try {
   console.warn('UsageStats native module not available.');
 }
 
+const ANDROID_VERSION_PIE = 28; // Android 9.0
+const ANDROID_VERSION_UPSIDE_DOWN_CAKE = 34; // Android 14
+
 try {
-  if (Platform.OS === 'android') {
+  if (Platform.OS === 'android' && Platform.Version >= ANDROID_VERSION_PIE) {
     HealthConnect = require('react-native-health-connect');
   }
 } catch (_e) {
@@ -49,19 +52,23 @@ async function isGoogleFitInstalled() {
 
 export const usageService = {
   async getStepProviderStatus() {
+    const isAndroid = Platform.OS === 'android';
+    const sdkVersion = isAndroid ? Platform.Version : 0;
+    
     const status = {
+      isHealthConnectSupported: isAndroid && sdkVersion >= ANDROID_VERSION_PIE,
       hasHealthConnect: false,
       hasGoogleFit: false,
       hasAnyProvider: false,
       recommendedInstall: 'Health Connect',
     };
 
-    if (Platform.OS !== 'android') {
+    if (!isAndroid) {
       status.hasAnyProvider = true;
       return status;
     }
 
-    if (HealthConnect) {
+    if (status.isHealthConnectSupported && HealthConnect) {
       try {
         if (typeof HealthConnect.getSdkStatus === 'function') {
           const sdkStatus = await HealthConnect.getSdkStatus();
@@ -73,14 +80,14 @@ export const usageService = {
           status.hasHealthConnect = initialized === true;
         }
       } catch (_e) {
-        console.warn('Health Connect getSdkStatus error:', _e?.message);
+        console.warn('Health Connect status check failed:', _e?.message);
         status.hasHealthConnect = false;
       }
     }
 
     status.hasGoogleFit = Boolean(GoogleFit) || await isGoogleFitInstalled();
     status.hasAnyProvider = status.hasHealthConnect || status.hasGoogleFit;
-    status.recommendedInstall = status.hasHealthConnect ? 'Health Connect' : 'Google Fit';
+    status.recommendedInstall = status.isHealthConnectSupported ? 'Health Connect' : 'Google Fit';
     return status;
   },
 
@@ -89,7 +96,7 @@ export const usageService = {
     let healthConnectGranted = false;
     let googleFitGranted = false;
 
-    if (status.hasHealthConnect && HealthConnect?.initialize && HealthConnect?.requestPermission) {
+    if (status.isHealthConnectSupported && status.hasHealthConnect && HealthConnect?.initialize && HealthConnect?.requestPermission) {
       try {
         const initialized = await HealthConnect.initialize();
         if (initialized) {
@@ -226,7 +233,8 @@ export const usageService = {
       const now = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-      if (HealthConnect) {
+      // Only attempt Health Connect if OS supports it and module loaded
+      if (HealthConnect && Platform.Version >= ANDROID_VERSION_PIE) {
         try {
           let isAvailable = false;
           if (typeof HealthConnect.getSdkStatus === 'function') {

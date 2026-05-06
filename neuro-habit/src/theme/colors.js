@@ -11,6 +11,10 @@ export const darkColors = {
   green: "#10B981",      
   greenLight: "#34D399",
   danger: "#EF4444",
+  warning: "#F59E0B",
+  white: "#FFFFFF",
+  black: "#000000",
+  transparent: "transparent",
   border: "rgba(255, 255, 255, 0.08)",
 };
 
@@ -27,8 +31,13 @@ export const lightColors = {
   green: "#059669",      
   greenLight: "#10B981",
   danger: "#E11D48",
+  warning: "#D97706",
+  white: "#FFFFFF",
+  black: "#000000",
+  transparent: "transparent",
   border: "rgba(15, 23, 42, 0.1)",
 };
 
 // Keeping this for backward compatibility during transition
 export const colors = darkColors;
+

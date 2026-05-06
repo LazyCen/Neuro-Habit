@@ -1,16 +1,17 @@
 import React from "react";
-import { View, Text, StyleSheet, SafeAreaView, Switch, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Modal } from "react-native";
+import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Modal } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import PremiumBackground from "../components/PremiumBackground";
 import { supabase } from "../services/supabaseClient";
+import { backendService } from "../services/backendService";
 import AppMessageModal from "../components/AppMessageModal";
 
 const ANIMAL_AVATARS = ["🐶", "🐱", "🐻", "🐼", "🐨", "🦊", "🐸", "🐯", "🐰", "🦁"];
 
 export default function SettingsScreen() {
-  const [notifications, setNotifications] = React.useState(true);
   const { isDark, toggleTheme, theme: colors } = useTheme();
   const { signOut, session } = useAuth();
   const [savingProfile, setSavingProfile] = React.useState(false);
@@ -89,23 +90,28 @@ export default function SettingsScreen() {
       const userId = session?.user?.id;
       if (!userId) throw new Error("No authenticated user.");
 
-      const tableDeletes = [
-        supabase.from("habits").delete().eq("user_id", userId),
-        supabase.from("mood_logs").delete().eq("user_id", userId),
-        supabase.from("daily_metrics").delete().eq("user_id", userId),
-        supabase.from("ai_insights").delete().eq("user_id", userId),
-        supabase.from("habit_logs").delete().eq("user_id", userId),
-        supabase.from("profiles").delete().eq("id", userId),
-      ];
+      try {
+        await backendService.deleteAccount();
+      } catch (e) {
+        console.warn("Backend delete account failed, falling back to local manual deletions.", e);
+        const tableDeletes = [
+          supabase.from("habits").delete().eq("user_id", userId),
+          supabase.from("mood_logs").delete().eq("user_id", userId),
+          supabase.from("daily_metrics").delete().eq("user_id", userId),
+          supabase.from("ai_insights").delete().eq("user_id", userId),
+          supabase.from("habit_logs").delete().eq("user_id", userId),
+          supabase.from("profiles").delete().eq("id", userId),
+        ];
 
-      await Promise.allSettled(tableDeletes);
+        await Promise.allSettled(tableDeletes);
 
-      await supabase.auth.updateUser({
-        data: {
-          account_delete_requested: true,
-          account_deleted_at: new Date().toISOString(),
-        },
-      });
+        await supabase.auth.updateUser({
+          data: {
+            account_delete_requested: true,
+            account_deleted_at: new Date().toISOString(),
+          },
+        });
+      }
 
       setShowDeleteConfirm(false);
       await signOut();
@@ -117,51 +123,57 @@ export default function SettingsScreen() {
     }
   };
 
+  const renderModals = () => (
+    <>
+      <AppMessageModal
+        visible={messageModal.visible}
+        title={messageModal.title}
+        message={messageModal.message}
+        onConfirm={() => setMessageModal({ visible: false, title: "", message: "" })}
+      />
+      <Modal
+        visible={showDeleteConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !deletingAccount && setShowDeleteConfirm(false)}
+      >
+        <View style={themedStyles.modalOverlay}>
+          <View style={themedStyles.modalCard}>
+            <Text style={themedStyles.modalTitle}>Delete Account Permanently?</Text>
+            <Text style={themedStyles.modalText}>
+              If you continue, your habits, moods, metrics, and insights will be deleted and cannot be recovered.
+            </Text>
+            <View style={themedStyles.modalActions}>
+              <TouchableOpacity
+                style={themedStyles.modalCancelButton}
+                onPress={() => setShowDeleteConfirm(false)}
+                disabled={deletingAccount}
+              >
+                <Text style={themedStyles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={themedStyles.modalDeleteButton}
+                onPress={confirmDeleteAccount}
+                disabled={deletingAccount}
+              >
+                {deletingAccount ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <Text style={themedStyles.modalDeleteText}>Yes, Delete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+
   if (showProfileScreen) {
     return (
       <SafeAreaView style={themedStyles.safeArea}>
         <PremiumBackground />
-        <AppMessageModal
-          visible={messageModal.visible}
-          title={messageModal.title}
-          message={messageModal.message}
-          onConfirm={() => setMessageModal({ visible: false, title: "", message: "" })}
-        />
-        <Modal
-          visible={showDeleteConfirm}
-          transparent
-          animationType="fade"
-          onRequestClose={() => !deletingAccount && setShowDeleteConfirm(false)}
-        >
-          <View style={themedStyles.modalOverlay}>
-            <View style={themedStyles.modalCard}>
-              <Text style={themedStyles.modalTitle}>Delete Account Permanently?</Text>
-              <Text style={themedStyles.modalText}>
-                If you continue, your habits, moods, metrics, and insights will be deleted and cannot be recovered.
-              </Text>
-              <View style={themedStyles.modalActions}>
-                <TouchableOpacity
-                  style={themedStyles.modalCancelButton}
-                  onPress={() => setShowDeleteConfirm(false)}
-                  disabled={deletingAccount}
-                >
-                  <Text style={themedStyles.modalCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={themedStyles.modalDeleteButton}
-                  onPress={confirmDeleteAccount}
-                  disabled={deletingAccount}
-                >
-                  {deletingAccount ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={themedStyles.modalDeleteText}>Yes, Delete</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
+        {renderModals()}
         <ScrollView style={themedStyles.container} contentContainerStyle={themedStyles.content}>
           <View style={themedStyles.profileHeaderRow}>
             <TouchableOpacity style={themedStyles.backButton} onPress={() => setShowProfileScreen(false)}>
@@ -211,7 +223,7 @@ export default function SettingsScreen() {
               ))}
             </View>
             <TouchableOpacity style={themedStyles.saveButton} onPress={handleSaveProfile} disabled={savingProfile}>
-              {savingProfile ? <ActivityIndicator color="#fff" /> : <Text style={themedStyles.saveButtonText}>Save Profile</Text>}
+              {savingProfile ? <ActivityIndicator color={colors.white} /> : <Text style={themedStyles.saveButtonText}>Save Profile</Text>}
             </TouchableOpacity>
           </View>
 
@@ -226,10 +238,10 @@ export default function SettingsScreen() {
               disabled={deletingAccount}
             >
               {deletingAccount ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.white} />
               ) : (
                 <>
-                  <Ionicons name="trash" size={16} color="#fff" />
+                  <Ionicons name="trash" size={16} color={colors.white} />
                   <Text style={themedStyles.deleteButtonText}>Delete Account</Text>
                 </>
               )}
@@ -243,6 +255,7 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={themedStyles.safeArea}>
       <PremiumBackground />
+      {renderModals()}
       <ScrollView style={themedStyles.container} contentContainerStyle={themedStyles.content}>
         <Text style={themedStyles.title}>Settings</Text>
         
@@ -259,26 +272,11 @@ export default function SettingsScreen() {
         <View style={themedStyles.section}>
           <Text style={themedStyles.sectionTitle}>Preferences</Text>
 
-          <View style={themedStyles.settingRow}>
-            <View style={themedStyles.settingLeft}>
-              <View style={[themedStyles.iconBox, { backgroundColor: 'rgba(59, 130, 246, 0.2)' }]}>
-                <Ionicons name="notifications" size={20} color={colors.primary} />
-              </View>
-              <Text style={themedStyles.settingText}>Push Notifications</Text>
-            </View>
-            <Switch
-              value={notifications}
-              onValueChange={setNotifications}
-              trackColor={{ false: colors.cardHighlight, true: colors.primary }}
-              thumbColor={colors.text}
-            />
-          </View>
 
-          <View style={themedStyles.divider} />
 
           <View style={themedStyles.settingRow}>
             <View style={themedStyles.settingLeft}>
-              <View style={[themedStyles.iconBox, { backgroundColor: 'rgba(139, 92, 246, 0.2)' }]}>
+              <View style={[themedStyles.iconBox, { backgroundColor: colors.accent + '33' }]}>
                 <Ionicons name="moon" size={20} color={colors.secondary} />
               </View>
               <Text style={themedStyles.settingText}>Dark Theme</Text>
@@ -297,7 +295,7 @@ export default function SettingsScreen() {
 
           <TouchableOpacity style={themedStyles.settingRow} onPress={() => setShowProfileScreen(true)}>
             <View style={themedStyles.settingLeft}>
-              <View style={[themedStyles.iconBox, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
+              <View style={[themedStyles.iconBox, { backgroundColor: colors.green + '33' }]}>
                 <Ionicons name="person" size={20} color={colors.green} />
               </View>
               <Text style={themedStyles.settingText}>Account Profile</Text>
@@ -309,10 +307,21 @@ export default function SettingsScreen() {
 
           <TouchableOpacity style={themedStyles.settingRow} onPress={signOut}>
              <View style={themedStyles.settingLeft}>
-              <View style={[themedStyles.iconBox, { backgroundColor: 'rgba(239, 68, 68, 0.2)' }]}>
-                <Ionicons name="log-out" size={20} color={colors.danger} />
+              <View style={[themedStyles.iconBox, { backgroundColor: colors.subtext + '33' }]}>
+                <Ionicons name="log-out" size={20} color={colors.subtext} />
               </View>
-              <Text style={[themedStyles.settingText, { color: colors.danger }]}>Log Out</Text>
+              <Text style={[themedStyles.settingText, { color: colors.subtext }]}>Log Out</Text>
+            </View>
+          </TouchableOpacity>
+
+          <View style={themedStyles.divider} />
+
+          <TouchableOpacity style={themedStyles.settingRow} onPress={handleDeleteAccount}>
+             <View style={themedStyles.settingLeft}>
+              <View style={[themedStyles.iconBox, { backgroundColor: colors.danger + '33' }]}>
+                <Ionicons name="trash" size={20} color={colors.danger} />
+              </View>
+              <Text style={[themedStyles.settingText, { color: colors.danger }]}>Delete Account and Data</Text>
             </View>
           </TouchableOpacity>
 
@@ -353,11 +362,11 @@ const styles = (colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 32,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: colors.cardHighlight,
     padding: 20,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.border,
   },
   avatarLarge: {
     width: 70,
@@ -499,7 +508,7 @@ const styles = (colors) => StyleSheet.create({
     alignItems: "center",
   },
   saveButtonText: {
-    color: "#fff",
+    color: colors.white,
     fontWeight: "700",
     fontSize: 14,
   },
@@ -535,13 +544,13 @@ const styles = (colors) => StyleSheet.create({
     gap: 8,
   },
   deleteButtonText: {
-    color: "#fff",
+    color: colors.white,
     fontWeight: "700",
     fontSize: 14,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: colors.cardHighlight,
     justifyContent: "center",
     padding: 24,
   },
@@ -591,7 +600,7 @@ const styles = (colors) => StyleSheet.create({
     justifyContent: "center",
   },
   modalDeleteText: {
-    color: "#fff",
+    color: colors.white,
     fontWeight: "700",
   },
 });

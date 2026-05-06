@@ -182,7 +182,7 @@ const styles = (colors, isDark) => StyleSheet.create({
     alignItems: 'center',
     borderWidth: !isDark ? 1 : 0,
     borderColor: colors.border,
-    shadowColor: '#000',
+    shadowColor: colors.black,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.2,
     shadowRadius: 20,
@@ -247,7 +247,7 @@ const styles = (colors, isDark) => StyleSheet.create({
     opacity: 0.7,
   },
   buttonText: {
-    color: 'white',
+    color: colors.white,
     fontSize: 18,
     fontWeight: 'bold',
   },

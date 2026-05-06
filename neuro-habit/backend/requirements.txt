@@ -5,3 +5,5 @@ supabase
 openai
 python-dotenv
 numpy
+slowapi
+requests

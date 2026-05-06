@@ -6,7 +6,7 @@ const LOCAL_HABITS_KEY = 'local_habits_v1';
 const DEFAULT_DASHBOARD_DATA = {
   steps: 0,
   screenTime: 0,
-  mood: 7,
+  mood: null,
   habitsCompleted: 0,
   habitsTotal: 0,
   streak: 0,
@@ -62,7 +62,7 @@ export async function fetchUserData() {
       withTimeout(usageService.getDailyStepCount(), 5000, 0),
     ]);
     console.log('[API] Fetched metrics - Steps:', dailySteps, 'Screen Time:', screenTime);
-    let mood = 7;
+    let mood = null;
     let habitsCompleted = 0;
     let habitsTotal = 0;
     let localHabits = [];
@@ -76,59 +76,69 @@ export async function fetchUserData() {
     }
 
     if (userId) {
-      const [latestMoodRes, habitsRes] = await Promise.all([
-        supabase
-          .from('mood_logs')
-          .select('mood_score')
-          .eq('user_id', userId)
-          .order('timestamp', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-        supabase
-          .from('habits')
-          .select('*')
-          .eq('user_id', userId),
-      ]);
+      // Fast path: use single RPC call for dashboard metrics
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_dashboard_metrics');
 
-      if (!latestMoodRes.error && latestMoodRes.data?.mood_score) {
-        mood = latestMoodRes.data.mood_score;
-      }
-
-      if (!habitsRes.error && Array.isArray(habitsRes.data)) {
-        const remoteHabits = habitsRes.data;
-        const hasCompletionColumn = remoteHabits.some(
-          (habit) =>
-            Object.prototype.hasOwnProperty.call(habit, 'completed') ||
-            Object.prototype.hasOwnProperty.call(habit, 'is_completed')
-        );
-
-        habitsTotal = remoteHabits.length;
-
-        if (hasCompletionColumn) {
-          habitsCompleted = remoteHabits.filter(
-            (habit) => Boolean(habit.completed ?? habit.is_completed ?? false)
-          ).length;
-        } else {
-          const startOfDay = new Date();
-          startOfDay.setHours(0, 0, 0, 0);
-          const endOfDay = new Date();
-          endOfDay.setHours(23, 59, 59, 999);
-
-          const { data: logs, error: logsError } = await supabase
-            .from('habit_logs')
-            .select('habit_id,status,created_at')
+      if (!rpcError && rpcData) {
+        mood = rpcData.mood || null;
+        habitsTotal = rpcData.habits_total || 0;
+        habitsCompleted = rpcData.habits_completed || 0;
+      } else {
+        // Fallback: N+1 parallel queries if the RPC hasn't been deployed yet
+        const [latestMoodRes, habitsRes] = await Promise.all([
+          supabase
+            .from('mood_logs')
+            .select('mood_score')
             .eq('user_id', userId)
-            .gte('created_at', startOfDay.toISOString())
-            .lte('created_at', endOfDay.toISOString());
+            .order('timestamp', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from('habits')
+            .select('*')
+            .eq('user_id', userId),
+        ]);
 
-          if (!logsError && Array.isArray(logs)) {
-            const completedToday = new Set(
-              logs
-                .filter((log) => (log.status || '').toLowerCase() === 'completed')
-                .map((log) => log.habit_id)
-                .filter(Boolean)
-            );
-            habitsCompleted = completedToday.size;
+        if (!latestMoodRes.error && latestMoodRes.data?.mood_score) {
+          mood = latestMoodRes.data.mood_score;
+        }
+
+        if (!habitsRes.error && Array.isArray(habitsRes.data)) {
+          const remoteHabits = habitsRes.data;
+          const hasCompletionColumn = remoteHabits.some(
+            (habit) =>
+              Object.prototype.hasOwnProperty.call(habit, 'completed') ||
+              Object.prototype.hasOwnProperty.call(habit, 'is_completed')
+          );
+
+          habitsTotal = remoteHabits.length;
+
+          if (hasCompletionColumn) {
+            habitsCompleted = remoteHabits.filter(
+              (habit) => Boolean(habit.completed ?? habit.is_completed ?? false)
+            ).length;
+          } else {
+            const startOfDay = new Date();
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date();
+            endOfDay.setHours(23, 59, 59, 999);
+
+            const { data: logs, error: logsError } = await supabase
+              .from('habit_logs')
+              .select('habit_id,status,created_at')
+              .eq('user_id', userId)
+              .gte('created_at', startOfDay.toISOString())
+              .lte('created_at', endOfDay.toISOString());
+
+            if (!logsError && Array.isArray(logs)) {
+              const completedToday = new Set(
+                logs
+                  .filter((log) => (log.status || '').toLowerCase() === 'completed')
+                  .map((log) => log.habit_id)
+                  .filter(Boolean)
+              );
+              habitsCompleted = completedToday.size;
+            }
           }
         }
       }

@@ -1,9 +1,11 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, TextInput, ScrollView, Platform } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Platform } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, { FadeInDown, FadeInUp, FadeOutUp, ZoomIn, BounceInDown } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { backendService } from "../services/backendService";
 import { useTheme } from "../context/ThemeContext";
 import PremiumBackground from "../components/PremiumBackground";
@@ -116,7 +118,13 @@ export default function MoodScreen() {
         message={modalConfig.message}
         onConfirm={() => setModalConfig({ visible: false, title: "", message: "" })}
       />
-      <ScrollView style={themedStyles.container} contentContainerStyle={themedStyles.content} showsVerticalScrollIndicator={false}>
+      <KeyboardAwareScrollView 
+        style={themedStyles.container} 
+        contentContainerStyle={themedStyles.content} 
+        showsVerticalScrollIndicator={false}
+        extraScrollHeight={100}
+        enableOnAndroid={true}
+      >
         {successMessage ? (
           <Animated.View
             pointerEvents="none"
@@ -125,7 +133,7 @@ export default function MoodScreen() {
             style={themedStyles.successBanner}
           >
             <View style={themedStyles.successIconContainer}>
-              <Ionicons name="checkmark-circle" size={20} color="white" />
+              <Ionicons name="checkmark-circle" size={20} color={colors.white} />
             </View>
             <View style={themedStyles.successContent}>
               <Text style={themedStyles.successText}>{successMessage}</Text>
@@ -208,7 +216,7 @@ export default function MoodScreen() {
             <Text style={themedStyles.saveButtonText}>Log Mood</Text>
           </TouchableOpacity>
         </Animated.View>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }
@@ -265,7 +273,7 @@ const styles = (colors) => StyleSheet.create({
     flex: 1,
   },
   successText: {
-    color: 'white',
+    color: colors.white,
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 0.3,
@@ -353,7 +361,7 @@ const styles = (colors) => StyleSheet.create({
     fontWeight: '600',
   },
   selectedTagText: {
-    color: "#FFF",
+    color: colors.white,
     fontWeight: "bold",
   },
   noteInput: {
@@ -385,7 +393,7 @@ const styles = (colors) => StyleSheet.create({
     shadowOpacity: 0,
   },
   saveButtonText: {
-    color: "#FFF",
+    color: colors.white,
     fontSize: 18,
     fontWeight: "900",
     letterSpacing: 0.5,

@@ -1,5 +1,6 @@
 import React from "react";
-import { ScrollView, Text, View, StyleSheet, SafeAreaView, ActivityIndicator, Platform } from "react-native";
+import { ScrollView, Text, View, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
 import InsightItem from "../components/InsightItem";
@@ -11,7 +12,7 @@ import { fetchWeeklyStepTrend } from "../services/api";
 
 export default function InsightsScreen() {
   const { theme: colors } = useTheme();
-  const { insights, data, loading } = useDashboard();
+  const { insights, data, loading, isOfflineMode } = useDashboard();
   const [trend, setTrend] = React.useState([]);
   const themedStyles = styles(colors);
 
@@ -44,6 +45,13 @@ export default function InsightsScreen() {
         <Animated.Text entering={FadeInDown.delay(200)} style={themedStyles.subtitle}>
           Based on your recent activity, here are some personalized observations.
         </Animated.Text>
+
+        {isOfflineMode && (
+          <Animated.View entering={FadeInDown.delay(300)} style={themedStyles.offlineBanner}>
+            <Ionicons name="cloud-offline" size={20} color={colors.warning} />
+            <Text style={themedStyles.offlineText}>Offline Mode: Showing cached insights</Text>
+          </Animated.View>
+        )}
 
         {loading ? (
           <View style={themedStyles.loadingContainer}>
@@ -134,7 +142,29 @@ const styles = (colors) => StyleSheet.create({
     color: colors.subtext,
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 32,
+    marginBottom: 20, // Reduced from 32 to fit the banner
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardHighlight,
+    borderColor: colors.warning,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginBottom: 24,
+    shadowColor: colors.warning,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  offlineText: {
+    color: colors.warning,
+    fontWeight: '700',
+    fontSize: 14,
+    marginLeft: 10,
   },
   loadingContainer: {
     paddingVertical: 60,

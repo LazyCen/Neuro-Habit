@@ -10,6 +10,8 @@ import RootNavigator from "./src/navigation/RootNavigator";
 import { AuthProvider } from "./src/context/AuthContext";
 import { ThemeProvider, useTheme } from "./src/context/ThemeContext";
 import { notificationService } from "./src/services/notificationService";
+import { backendService } from "./src/services/backendService";
+import { registerBackgroundHealthSync } from "./src/services/backgroundSync";
 
 const NavigationWrapper = () => {
   const { theme: colors, isDark } = useTheme();
@@ -37,7 +39,9 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS !== 'web') {
       notificationService.registerForPushNotificationsAsync();
+      registerBackgroundHealthSync();
     }
+    backendService.fetchTrustedTime();
   }, []);
 
   return (

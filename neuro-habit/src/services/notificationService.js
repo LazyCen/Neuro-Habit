@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { darkColors } from '../theme/colors';
 
 const STREAK_RISK_TYPE = 'streak-risk-reminder';
 
@@ -19,7 +20,7 @@ export const notificationService = {
         name: 'default',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
+        lightColor: darkColors.primary,
       });
     }
 

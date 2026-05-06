@@ -1,4 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// secureStorage routes auth token keys to expo-secure-store (Android Keystore /
+// iOS Keychain) and falls back to AsyncStorage for non-sensitive keys.
+import secureStorage from './secureStorage';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -12,7 +14,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: AsyncStorage,
+    // JWT session tokens are now stored in the OS-level encrypted keystore,
+    // preventing extraction from rooted/jailbroken devices.
+    storage: secureStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

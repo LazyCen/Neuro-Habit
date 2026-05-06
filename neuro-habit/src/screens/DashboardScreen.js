@@ -1,9 +1,11 @@
 import React from "react";
-import { ScrollView, Text, View, StyleSheet, ActivityIndicator, SafeAreaView, TouchableOpacity, Linking } from "react-native";
+import { ScrollView, Text, View, StyleSheet, ActivityIndicator, TouchableOpacity, Linking } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import Animated, { FadeInDown, FadeInUp, FadeOut } from "react-native-reanimated";
 import Card from "../components/Card";
+import HealthPermissionModal from "../components/HealthPermissionModal";
 import useDashboard from "../hooks/useDashboard";
 import { usageService } from "../services/usageService";
 import { useAuth } from "../context/AuthContext";
@@ -28,6 +30,7 @@ export default function DashboardScreen() {
   const [showUpdatingBadge, setShowUpdatingBadge] = React.useState(false);
   const [permissionLoading, setPermissionLoading] = React.useState(false);
   const [usernameLoading, setUsernameLoading] = React.useState(false);
+  const [showHealthModal, setShowHealthModal] = React.useState(false);
 
   React.useEffect(() => {
     let hideTimer;
@@ -138,12 +141,14 @@ export default function DashboardScreen() {
   }
 
   const progress = data.habitsTotal > 0 ? data.habitsCompleted / data.habitsTotal : 0;
-  const userName = session?.user?.user_metadata?.username || 
-                   session?.user?.user_metadata?.first_name || 
+  const metadata = session?.user?.user_metadata || {};
+  const userName = metadata.username || 
+                   metadata.first_name || 
                    (session?.user?.email ? session.user.email.split('@')[0] : "Friend");
   const capitalizedName = userName.charAt(0).toUpperCase() + userName.slice(1);
-  const hasUsername = !!session?.user?.user_metadata?.username;
+  const hasUsername = !!metadata.username;
   const isGuest = session?.user?.email === 'guest@example.com';
+  const avatarEmoji = metadata.avatar_emoji || "🐶";
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -171,9 +176,9 @@ export default function DashboardScreen() {
               </Animated.View>
             ) : null}
           </View>
-          <TouchableOpacity style={themedStyles.avatarPlaceholder}>
-            <Ionicons name="person" size={24} color="white" />
-          </TouchableOpacity>
+          <View style={themedStyles.avatarPlaceholder}>
+            <Text style={themedStyles.avatarEmoji}>{avatarEmoji}</Text>
+          </View>
         </Animated.View>
 
         {!hasUsername && !isGuest && (
@@ -232,14 +237,16 @@ export default function DashboardScreen() {
                 )}
                 {!stepProviderStatus.hasAnyProvider && (
                   <Text style={themedStyles.syncSubtext}>
-                    Install Health Connect to enable real step counting.
+                    {stepProviderStatus.isHealthConnectSupported 
+                      ? "Install Health Connect to enable real step counting."
+                      : "Health Connect is unsupported on this Android version. Try Google Fit instead."}
                   </Text>
                 )}
                 <View style={themedStyles.syncButtons}>
                   {!hasUsagePerm && (
                     <TouchableOpacity 
                       style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }]} 
-                      onPress={handleConnectUsage}
+                      onPress={() => setShowHealthModal(true)}
                       disabled={permissionLoading}
                     >
                       {permissionLoading ? (
@@ -252,7 +259,7 @@ export default function DashboardScreen() {
                   {!hasPedometerPerm && (
                     <TouchableOpacity 
                       style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }]} 
-                      onPress={handleConnectUsage}
+                      onPress={() => setShowHealthModal(true)}
                       disabled={permissionLoading}
                     >
                       {permissionLoading ? (
@@ -265,7 +272,7 @@ export default function DashboardScreen() {
                   {!stepProviderStatus.hasAnyProvider && (
                     <TouchableOpacity 
                       style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }]} 
-                      onPress={handleConnectUsage}
+                      onPress={() => setShowHealthModal(true)}
                       disabled={permissionLoading}
                     >
                       {permissionLoading ? (
@@ -307,7 +314,7 @@ export default function DashboardScreen() {
           <Animated.View entering={FadeInUp.delay(700)} style={themedStyles.halfCardWrapper}>
             <Card style={themedStyles.halfCard}>
               <Ionicons name="happy-outline" size={28} color={colors.secondary} style={themedStyles.icon} />
-              <Text style={themedStyles.statValue}>{data.mood}/10</Text>
+              <Text style={themedStyles.statValue}>{data.mood != null ? `${data.mood}/10` : '--'}</Text>
               <Text style={themedStyles.statLabel}>Mood Score</Text>
             </Card>
           </Animated.View>
@@ -326,6 +333,15 @@ export default function DashboardScreen() {
         </Animated.View>
 
       </ScrollView>
+      <HealthPermissionModal 
+        visible={showHealthModal} 
+        onConfirm={() => {
+          setShowHealthModal(false);
+          handleConnectUsage();
+        }} 
+        onCancel={() => setShowHealthModal(false)}
+        loading={permissionLoading}
+      />
     </SafeAreaView>
   );
 }
@@ -394,6 +410,9 @@ const styles = (colors) => StyleSheet.create({
     backgroundColor: colors.primary,
     justifyContent: "center",
     alignItems: "center",
+  },
+  avatarEmoji: {
+    fontSize: 24,
   },
   heroCard: {
     backgroundColor: colors.card,
@@ -534,7 +553,7 @@ const styles = (colors) => StyleSheet.create({
     borderRadius: 6,
   },
   syncButtonText: {
-    color: "#FFFFFF",
+    color: colors.white,
     fontSize: 12,
     fontWeight: "600",
   },

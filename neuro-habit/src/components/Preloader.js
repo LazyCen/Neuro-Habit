@@ -82,7 +82,7 @@ export default function Preloader() {
           <Defs>
             <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
               <Stop offset="0%" stopColor={colors.background} stopOpacity="1" />
-              <Stop offset="100%" stopColor="#0F172A" stopOpacity="1" />
+              <Stop offset="100%" stopColor={colors.black} stopOpacity="1" />
             </LinearGradient>
             <LinearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
               <Stop offset="0%" stopColor={colors.primary} stopOpacity="0.15" />
@@ -98,7 +98,7 @@ export default function Preloader() {
       <View style={styles.content}>
         {/* Logo Section */}
         <Animated.View style={[styles.logoContainer, animatedLogoStyle]}>
-          <Animated.View style={[styles.glow, animatedGlowSecondaryStyle, { backgroundColor: colors.secondary || '#3B82F6' }]} />
+          <Animated.View style={[styles.glow, animatedGlowSecondaryStyle, { backgroundColor: colors.secondary }]} />
           <Animated.View style={[styles.glow, animatedGlowStyle]} />
           <View style={styles.iconCircle}>
             <Ionicons name="pulse" size={60} color={colors.primary} />
@@ -137,11 +137,11 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: colors.primary + '1A',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: colors.primary + '4D',
     shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
@@ -159,10 +159,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '900',
-    color: 'white',
+    color: colors.white,
     letterSpacing: 4,
     marginBottom: 8,
-    textShadowColor: 'rgba(16, 185, 129, 0.5)',
+    textShadowColor: colors.primary + '80',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 10,
   },
