@@ -56,7 +56,7 @@ export default function AuthScreen() {
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   
-  const { signIn, signUp, bypassAuth } = useAuth();
+  const { signIn, signUp } = useAuth();
 
   const buttonScale = useSharedValue(1);
 
@@ -108,8 +108,7 @@ export default function AuthScreen() {
           'Fix options:\n' +
           '1. Check your inbox for a Supabase confirmation email\n' +
           '2. In Supabase Dashboard -> Authentication -> Users -> confirm manually\n' +
-          '3. In Supabase Dashboard -> Authentication -> Settings -> disable Confirm email\n\n' +
-          'Or tap Continue as Guest below to test the app.'
+          '3. In Supabase Dashboard -> Authentication -> Settings -> disable Confirm email'
         );
       } else {
         console.log('AuthScreen: Sign in success, session user:', data.session.user.email);
@@ -406,14 +405,7 @@ export default function AuthScreen() {
             </TouchableOpacity>
           </Animated.View>
 
-          {isLogin && (
-            <TouchableOpacity 
-              style={themedStyles.guestMode}
-              onPress={bypassAuth}
-            >
-              <Text style={themedStyles.guestText}>Continue as Guest</Text>
-            </TouchableOpacity>
-          )}
+
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -585,15 +577,7 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
     fontSize: 15,
     fontWeight: '700',
   },
-  guestMode: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  guestText: {
-    color: TEXT_MUTED,
-    fontSize: 14,
-    textDecorationLine: 'underline',
-  },
+
   forgotOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
