@@ -92,7 +92,12 @@ async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
 
     const response = await fetchWithTimeout(`${baseUrl}${path}`, updatedOptions, timeoutMs);
     if (!response.ok) {
-      throw new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
+      // Attach the HTTP status so callers can distinguish permanent (4xx) from
+      // transient (5xx / network) failures without re-parsing error messages.
+      const err = new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
+      err.status = response.status;
+      err.isPermanent = response.status >= 400 && response.status < 500;
+      throw err;
     }
     return await response.json();
   } catch (error) {
@@ -434,13 +439,19 @@ export const backendService = {
     };
 
     const markFailure = (item, error, type) => {
+      // 4xx errors are permanent client rejections (bad payload, auth, etc.).
+      // Retrying them is futile and blocks other items — drop immediately.
+      if (error?.isPermanent) {
+        console.error(`[Telemetry] Permanent rejection (HTTP ${error.status}) for ${type} — dropping:`, error);
+        return null;
+      }
       const retryCount = (item.retryCount || 0) + 1;
       if (retryCount >= MAX_RETRIES) {
         // Log to telemetry (mock Sentry)
         console.error(`[Telemetry] Permanent sync failure for ${type}:`, error);
         return null; // Drop from queue
       }
-      // Exponential backoff: 2^retryCount minutes
+      // Exponential backoff: 2^retryCount minutes (only for transient 5xx / network errors)
       const backoffMinutes = Math.pow(2, retryCount);
       const nextRetryAt = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
       return { ...item, retryCount, nextRetryAt };

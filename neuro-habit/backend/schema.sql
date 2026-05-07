@@ -88,6 +88,8 @@ CREATE POLICY "Users can delete their own habit logs" ON habit_logs FOR DELETE U
 
 CREATE POLICY "Users can view their own mood logs" ON mood_logs FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert their own mood logs" ON mood_logs FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update their own mood logs" ON mood_logs FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete their own mood logs" ON mood_logs FOR DELETE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can view their own metrics" ON daily_metrics FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert their own metrics" ON daily_metrics FOR INSERT WITH CHECK (auth.uid() = user_id);
