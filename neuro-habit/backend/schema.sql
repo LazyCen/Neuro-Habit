@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS habits (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
   name TEXT NOT NULL,
-  completed BOOLEAN DEFAULT FALSE,
   streak INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -128,14 +127,8 @@ BEGIN
   LIMIT 1;
 
   -- Get habits stats
-  SELECT 
-    COUNT(*),
-    COUNT(*) FILTER (WHERE completed = true)
-  INTO 
-    v_habits_total, 
-    v_habits_completed
-  FROM habits
-  WHERE user_id = auth.uid();
+  SELECT COUNT(*) INTO v_habits_total FROM habits WHERE user_id = auth.uid();
+  SELECT COUNT(DISTINCT habit_id) INTO v_habits_completed FROM habit_logs WHERE user_id = auth.uid() AND DATE(created_at) = CURRENT_DATE;
 
   v_result := jsonb_build_object(
     'mood', v_mood,
@@ -144,5 +137,49 @@ BEGIN
   );
 
   RETURN v_result;
+END;
+$$;
+
+-- Transactional replace for AI insights
+CREATE OR REPLACE FUNCTION replace_user_insights(p_user_id UUID, p_insights JSONB)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  insight RECORD;
+BEGIN
+  -- Delete old insights
+  DELETE FROM ai_insights WHERE user_id = p_user_id;
+
+  -- Insert new insights
+  FOR insight IN SELECT * FROM jsonb_array_elements(p_insights)
+  LOOP
+    INSERT INTO ai_insights (user_id, text, type, icon, created_at)
+    VALUES (
+      p_user_id,
+      insight.value->>'text',
+      insight.value->>'type',
+      insight.value->>'icon',
+      COALESCE((insight.value->>'created_at')::TIMESTAMP WITH TIME ZONE, NOW())
+    );
+  END LOOP;
+END;
+$$;
+
+-- Atomic account deletion RPC
+CREATE OR REPLACE FUNCTION delete_user_account(p_user_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Delete from all associated tables in a single transaction
+  DELETE FROM public.habit_logs WHERE user_id = p_user_id;
+  DELETE FROM public.mood_logs WHERE user_id = p_user_id;
+  DELETE FROM public.daily_metrics WHERE user_id = p_user_id;
+  DELETE FROM public.ai_insights WHERE user_id = p_user_id;
+  DELETE FROM public.habits WHERE user_id = p_user_id;
+  DELETE FROM public.profiles WHERE id = p_user_id;
 END;
 $$;

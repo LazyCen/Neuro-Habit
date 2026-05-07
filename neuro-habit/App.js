@@ -16,7 +16,7 @@ import { registerBackgroundHealthSync } from "./src/services/backgroundSync";
 const NavigationWrapper = () => {
   const { theme: colors, isDark } = useTheme();
   
-  const MyTheme = {
+  const MyTheme = React.useMemo(() => ({
     ...(isDark ? DarkTheme : DefaultTheme),
     colors: {
       ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
@@ -26,7 +26,7 @@ const NavigationWrapper = () => {
       border: colors.border,
       primary: colors.primary,
     },
-  };
+  }), [isDark, colors]);
 
   return (
     <NavigationContainer theme={MyTheme}>

@@ -23,9 +23,7 @@ try {
 
 try {
   if (Platform.OS === 'android') {
-    // Use eval to avoid bundler statically resolving this optional import
-    const optionalRequire = eval('require'); // eslint-disable-line no-eval
-    GoogleFit = optionalRequire('react-native-google-fit');
+    GoogleFit = require('react-native-google-fit').default || require('react-native-google-fit');
   }
 } catch (_e) {
   console.warn('Google Fit module not available.');

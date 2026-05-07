@@ -105,40 +105,28 @@ export async function fetchUserData() {
 
         if (!habitsRes.error && Array.isArray(habitsRes.data)) {
           const remoteHabits = habitsRes.data;
-          const hasCompletionColumn = remoteHabits.some(
-            (habit) =>
-              Object.prototype.hasOwnProperty.call(habit, 'completed') ||
-              Object.prototype.hasOwnProperty.call(habit, 'is_completed')
-          );
-
           habitsTotal = remoteHabits.length;
 
-          if (hasCompletionColumn) {
-            habitsCompleted = remoteHabits.filter(
-              (habit) => Boolean(habit.completed ?? habit.is_completed ?? false)
-            ).length;
-          } else {
-            const startOfDay = new Date();
-            startOfDay.setHours(0, 0, 0, 0);
-            const endOfDay = new Date();
-            endOfDay.setHours(23, 59, 59, 999);
+          const startOfDay = new Date();
+          startOfDay.setHours(0, 0, 0, 0);
+          const endOfDay = new Date();
+          endOfDay.setHours(23, 59, 59, 999);
 
-            const { data: logs, error: logsError } = await supabase
-              .from('habit_logs')
-              .select('habit_id,status,created_at')
-              .eq('user_id', userId)
-              .gte('created_at', startOfDay.toISOString())
-              .lte('created_at', endOfDay.toISOString());
+          const { data: logs, error: logsError } = await supabase
+            .from('habit_logs')
+            .select('habit_id,status,created_at')
+            .eq('user_id', userId)
+            .gte('created_at', startOfDay.toISOString())
+            .lte('created_at', endOfDay.toISOString());
 
-            if (!logsError && Array.isArray(logs)) {
-              const completedToday = new Set(
-                logs
-                  .filter((log) => (log.status || '').toLowerCase() === 'completed')
-                  .map((log) => log.habit_id)
-                  .filter(Boolean)
-              );
-              habitsCompleted = completedToday.size;
-            }
+          if (!logsError && Array.isArray(logs)) {
+            const completedToday = new Set(
+              logs
+                .filter((log) => (log.status || '').toLowerCase() === 'completed')
+                .map((log) => log.habit_id)
+                .filter(Boolean)
+            );
+            habitsCompleted = completedToday.size;
           }
         }
       }

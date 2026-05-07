@@ -5,8 +5,6 @@ import datetime
 class Habit(BaseModel):
     id: Optional[str] = None
     name: str
-    completed: bool = False
-    streak: int = 0
 
 class MoodLog(BaseModel):
     mood: int  # 1-10

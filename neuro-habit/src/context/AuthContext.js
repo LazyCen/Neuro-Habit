@@ -15,12 +15,21 @@ export const AuthProvider = ({ children }) => {
     
     // Small delay to ensure storage is ready
     setTimeout(() => {
-      supabase.auth.getSession().then(({ data: { session }, error }) => {
+
+      supabase.auth.getSession().then(async ({ data: { session }, error }) => {
         if (error) console.error('AuthContext: Error getting session:', error);
-        console.log('AuthContext: Initial session:', session ? 'Found' : 'Not found');
-        setSession(session);
+        
+        if (session?.user?.user_metadata?.account_delete_requested) {
+          console.warn('AuthContext: Initial session detected as deleted. Clearing.');
+          await supabase.auth.signOut();
+          setSession(null);
+        } else {
+          console.log('AuthContext: Initial session:', session ? 'Found' : 'Not found');
+          setSession(session);
+        }
         setLoading(false);
       });
+
     }, 500);
 
     // Test connection
@@ -37,11 +46,22 @@ export const AuthProvider = ({ children }) => {
         }
       });
 
+
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       console.log('AuthContext: Auth state changed event:', _event, 'Session user:', session?.user?.email);
+      
+      if (session?.user?.user_metadata?.account_delete_requested) {
+        console.warn('AuthContext: Detected account in deletion state. Forcing sign out.');
+        await supabase.auth.signOut();
+        setSession(null);
+        setLoading(false);
+        return;
+      }
+
       setSession(session);
       setLoading(false);
+
       
       // If user was updated, re-fetch to get latest metadata
       if (_event === 'USER_UPDATED' && session?.user?.id) {

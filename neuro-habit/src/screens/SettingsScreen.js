@@ -90,28 +90,7 @@ export default function SettingsScreen() {
       const userId = session?.user?.id;
       if (!userId) throw new Error("No authenticated user.");
 
-      try {
-        await backendService.deleteAccount();
-      } catch (e) {
-        console.warn("Backend delete account failed, falling back to local manual deletions.", e);
-        const tableDeletes = [
-          supabase.from("habits").delete().eq("user_id", userId),
-          supabase.from("mood_logs").delete().eq("user_id", userId),
-          supabase.from("daily_metrics").delete().eq("user_id", userId),
-          supabase.from("ai_insights").delete().eq("user_id", userId),
-          supabase.from("habit_logs").delete().eq("user_id", userId),
-          supabase.from("profiles").delete().eq("id", userId),
-        ];
-
-        await Promise.allSettled(tableDeletes);
-
-        await supabase.auth.updateUser({
-          data: {
-            account_delete_requested: true,
-            account_deleted_at: new Date().toISOString(),
-          },
-        });
-      }
+      await backendService.deleteAccount();
 
       setShowDeleteConfirm(false);
       await signOut();

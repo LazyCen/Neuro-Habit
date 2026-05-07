@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import { MMKV } from 'react-native-mmkv';
 import { supabase } from './supabaseClient';
 
 const LOCAL_MOOD_LOGS_KEY = 'local_mood_logs_v1';
@@ -28,12 +29,15 @@ function getDevHostFromExpo() {
 function getApiBaseUrls() {
   const urls = [];
   const configuredUrl = process.env.EXPO_PUBLIC_API_URL;
-  const devHost = getDevHostFromExpo();
 
   if (configuredUrl) urls.push(trimTrailingSlash(configuredUrl));
-  if (devHost) urls.push(`http://${devHost}:8000`);
-  if (Platform.OS === 'android') urls.push('http://10.0.2.2:8000');
-  urls.push('http://localhost:8000');
+
+  if (__DEV__) {
+    const devHost = getDevHostFromExpo();
+    if (devHost) urls.push(`http://${devHost}:8000`);
+    if (Platform.OS === 'android') urls.push('http://10.0.2.2:8000');
+    urls.push('http://localhost:8000');
+  }
 
   return [...new Set(urls)];
 }
@@ -67,24 +71,48 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
   }
 }
 
-// Sensitive health-data queues are persisted in the OS-level encrypted
-// keystore (Android Keystore / iOS Keychain) via expo-secure-store.
+// Sensitive health-data queues are persisted in an encrypted MMKV instance
+// to prevent overflowing the OS-level keystore.
+let encryptedStorage = null;
+
+async function getEncryptedStorage() {
+  if (encryptedStorage) return encryptedStorage;
+  try {
+    let key = await SecureStore.getItemAsync('mmkv_encryption_key');
+    if (!key) {
+      key = Date.now().toString(36) + Math.random().toString(36).substring(2);
+      await SecureStore.setItemAsync('mmkv_encryption_key', key);
+    }
+    encryptedStorage = new MMKV({
+      id: 'secure-offline-data',
+      encryptionKey: key,
+    });
+    return encryptedStorage;
+  } catch (e) {
+    console.error('Failed to initialize encrypted MMKV storage', e);
+    encryptedStorage = new MMKV({ id: 'secure-offline-data' });
+    return encryptedStorage;
+  }
+}
+
 async function getSecureArray(key) {
   try {
-    const raw = await SecureStore.getItemAsync(key);
+    const storage = await getEncryptedStorage();
+    const raw = storage.getString(key);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    console.error(`[SecureStore] Error reading ${key}:`, e);
+    console.error(`[MMKV] Error reading ${key}:`, e);
     return [];
   }
 }
 
 async function setSecureArray(key, value) {
   try {
-    await SecureStore.setItemAsync(key, JSON.stringify(value));
+    const storage = await getEncryptedStorage();
+    storage.set(key, JSON.stringify(value));
   } catch (e) {
-    console.error(`[SecureStore] Error writing ${key}:`, e);
+    console.error(`[MMKV] Error writing ${key}:`, e);
   }
 }
 
@@ -145,11 +173,10 @@ async function saveMoodLocally(mood, note) {
   };
 
   try {
-    // Health data persisted in the encrypted keystore.
-    const existing = await SecureStore.getItemAsync(LOCAL_MOOD_LOGS_KEY);
-    const logs = existing ? JSON.parse(existing) : [];
+    // Health data persisted in the encrypted local database.
+    const logs = await getSecureArray(LOCAL_MOOD_LOGS_KEY);
     logs.push(entry);
-    await SecureStore.setItemAsync(LOCAL_MOOD_LOGS_KEY, JSON.stringify(logs));
+    await setSecureArray(LOCAL_MOOD_LOGS_KEY, logs);
   } catch (storageError) {
     console.error('Error saving mood locally:', storageError);
   }
@@ -276,8 +303,8 @@ async function createHabitViaSupabase(name) {
   }
 
   const payloadVariants = [
-    { user_id: userId, name: trimmedValue, streak: 0 },
-    { user_id: userId, title: trimmedValue, streak: 0 },
+    { user_id: userId, name: trimmedValue },
+    { user_id: userId, title: trimmedValue },
   ];
 
   let lastError = null;
@@ -348,14 +375,41 @@ export const backendService = {
     const isOnline = await this.isOnline();
     if (!isOnline) return;
 
+    const MAX_RETRIES = 8;
+
+    const shouldRetry = (item) => {
+      const retryCount = item.retryCount || 0;
+      if (retryCount >= MAX_RETRIES) return false;
+      const nextRetryAt = item.nextRetryAt ? new Date(item.nextRetryAt).getTime() : 0;
+      return Date.now() >= nextRetryAt;
+    };
+
+    const markFailure = (item, error, type) => {
+      const retryCount = (item.retryCount || 0) + 1;
+      if (retryCount >= MAX_RETRIES) {
+        // Log to telemetry (mock Sentry)
+        console.error(`[Telemetry] Permanent sync failure for ${type}:`, error);
+        return null; // Drop from queue
+      }
+      // Exponential backoff: 2^retryCount minutes
+      const backoffMinutes = Math.pow(2, retryCount);
+      const nextRetryAt = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
+      return { ...item, retryCount, nextRetryAt };
+    };
+
     const pendingMoods = await getArrayStorage(PENDING_MOODS_KEY);
     if (pendingMoods.length > 0) {
       const remainingMoods = [];
       for (const item of pendingMoods) {
+        if (!shouldRetry(item)) {
+          if ((item.retryCount || 0) < MAX_RETRIES) remainingMoods.push(item);
+          continue;
+        }
         try {
           await postMoodOnline(item.mood, item.note);
         } catch (e) {
-          remainingMoods.push(item);
+          const updatedItem = markFailure(item, e, 'mood');
+          if (updatedItem) remainingMoods.push(updatedItem);
         }
       }
       await setArrayStorage(PENDING_MOODS_KEY, remainingMoods);
@@ -365,10 +419,15 @@ export const backendService = {
     if (pendingMetrics.length > 0) {
       const remainingMetrics = [];
       for (const item of pendingMetrics) {
+        if (!shouldRetry(item)) {
+          if ((item.retryCount || 0) < MAX_RETRIES) remainingMetrics.push(item);
+          continue;
+        }
         try {
           await postMetricsOnline(item.steps, item.screenTime);
         } catch (e) {
-          remainingMetrics.push(item);
+          const updatedItem = markFailure(item, e, 'metrics');
+          if (updatedItem) remainingMetrics.push(updatedItem);
         }
       }
       await setArrayStorage(PENDING_METRICS_KEY, remainingMetrics);

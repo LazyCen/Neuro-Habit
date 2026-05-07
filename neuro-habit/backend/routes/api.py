@@ -41,7 +41,7 @@ async def get_insights(request: Request, user=Depends(get_current_user), client:
             if date in data_by_date:
                 data_by_date[date]["mood"] = m["mood_score"]
 
-        habits_res = check_supabase_response(client.table("habits").select("created_at, completed").eq("user_id", user_id).eq("completed", True).execute())
+        habits_res = check_supabase_response(client.table("habit_logs").select("created_at").eq("user_id", user_id).execute())
         for h in habits_res.data or []:
             date = h["created_at"].split("T")[0]
             if date in data_by_date:
@@ -58,7 +58,7 @@ async def get_insights(request: Request, user=Depends(get_current_user), client:
 @router.post("/habits")
 @limiter.limit(LIMIT_WRITE)
 async def create_habit(request: Request, habit: Habit, user=Depends(get_current_user), client: Client = Depends(get_user_client)):
-    data = {"user_id": user.id, "name": habit.name, "completed": habit.completed, "streak": habit.streak}
+    data = {"user_id": user.id, "name": habit.name}
     response = check_supabase_response(client.table("habits").insert(data).execute())
     return response.data[0] if response.data else {"status": "error"}
 
@@ -76,24 +76,34 @@ async def update_metrics(request: Request, metrics: DailyMetrics, user=Depends(g
     response = check_supabase_response(client.table("daily_metrics").upsert(data, on_conflict="user_id,date").execute())
     return response.data[0] if response.data else {"status": "error"}
 
+
 @router.delete("/account")
 @limiter.limit(LIMIT_WRITE)
 async def delete_account(request: Request, user=Depends(get_current_user), admin: Client = Depends(get_admin_client)):
     user_id = user.id
     try:
-        # Wipe user data
-        admin.table("habits").delete().eq("user_id", user_id).execute()
-        admin.table("mood_logs").delete().eq("user_id", user_id).execute()
-        admin.table("daily_metrics").delete().eq("user_id", user_id).execute()
-        admin.table("ai_insights").delete().eq("user_id", user_id).execute()
-        admin.table("habit_logs").delete().eq("user_id", user_id).execute()
-        admin.table("profiles").delete().eq("id", user_id).execute()
+        # First, mark the user as 'deleting' in metadata to prevent concurrent operations
+        # and signal that the account is in a terminal state.
+        admin.auth.admin.update_user_by_id(
+            user_id, 
+            {"user_metadata": {"account_delete_requested": True}}
+        )
+
+        # Wipe user data atomically using the RPC
+        rpc_res = admin.rpc("delete_user_account", {"p_user_id": user_id}).execute()
         
-        # Delete user auth record
+        # Finally, delete the auth user record itself
+        # This is the point of no return for the session
         admin.auth.admin.delete_user(user_id)
-        return {"status": "success"}
+        
+        return {"status": "success", "message": "Account and all associated data deleted successfully."}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        print(f"Error during account deletion for user {user_id}: {str(exc)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="A critical error occurred during account deletion. Please contact support if your session persists."
+        )
+
 
 @router.post("/admin/generate-insights", include_in_schema=False)
 async def admin_generate_insights(request: Request, _: None = Depends(verify_cron_secret), admin: Client = Depends(get_admin_client)):
@@ -118,7 +128,7 @@ async def admin_generate_insights(request: Request, _: None = Depends(verify_cro
                 if date in data_by_date:
                     data_by_date[date]["mood"] = m["mood_score"]
 
-            habits_res = admin.table("habits").select("created_at, completed").eq("user_id", user_id).eq("completed", True).execute()
+            habits_res = admin.table("habit_logs").select("created_at").eq("user_id", user_id).execute()
             for h in habits_res.data or []:
                 date = h["created_at"].split("T")[0]
                 if date in data_by_date:
@@ -131,9 +141,8 @@ async def admin_generate_insights(request: Request, _: None = Depends(verify_cro
             if not insights:
                 continue
 
-            admin.table("ai_insights").delete().eq("user_id", user_id).execute()
-            rows = [{"user_id": user_id, "text": ins["text"], "type": ins["type"], "icon": ins["icon"], "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()} for ins in insights]
-            admin.table("ai_insights").insert(rows).execute()
+            rows = [{"text": ins["text"], "type": ins["type"], "icon": ins["icon"], "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()} for ins in insights]
+            admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
             processed += 1
         except Exception as exc:
             errors.append({"user_id": user_id, "error": str(exc)})

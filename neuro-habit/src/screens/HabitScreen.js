@@ -134,17 +134,26 @@ export default function HabitScreen() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user?.id) return;
 
-    const [remoteRes, localHabits, metaMap] = await Promise.all([
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const [remoteRes, logsRes, localHabits, metaMap] = await Promise.all([
       supabase
         .from("habits")
         .select("*")
         .eq("user_id", session.user.id)
         .order("created_at", { ascending: true }),
+      supabase
+        .from("habit_logs")
+        .select("habit_id")
+        .eq("user_id", session.user.id)
+        .gte("created_at", startOfDay.toISOString()),
       getLocalHabits(),
       getHabitMeta()
     ]);
 
     const { data, error } = remoteRes;
+    const completedHabitIds = new Set((logsRes.data || []).map(log => log.habit_id));
     let allHabits = [];
     const activeHabitIds = new Set();
 
@@ -154,12 +163,7 @@ export default function HabitScreen() {
         return {
           id: habit.id,
           name: habit.name ?? habit.title ?? "Untitled Habit",
-          completed: Boolean(habit.completed ?? habit.is_completed ?? false),
-          completedColumn: Object.prototype.hasOwnProperty.call(habit, "completed")
-            ? "completed"
-            : Object.prototype.hasOwnProperty.call(habit, "is_completed")
-              ? "is_completed"
-              : null,
+          completed: completedHabitIds.has(habit.id),
           streak: habit.streak || 0,
           lastCompletedAt: habit.last_completed_at || null,
           localOnly: false,
@@ -259,20 +263,39 @@ export default function HabitScreen() {
               streak: latestHabit.streak,
               last_completed_at: latestHabit.completed ? now : currentMeta.lastCompletedAt,
             };
-            if (latestHabit.completedColumn) {
-              updatePayload[latestHabit.completedColumn] = latestHabit.completed;
-            }
 
             if (controller.signal.aborted) return;
 
-            const { error } = await supabase
+            const { error: updateError } = await supabase
               .from("habits")
               .update(updatePayload)
               .eq("id", id)
               .abortSignal(controller.signal);
 
-            if (error && !controller.signal.aborted) {
-              console.error('[HabitToggle] Supabase sync failed:', error.message);
+            if (updateError && !controller.signal.aborted) {
+              console.error('[HabitToggle] Supabase habit update failed:', updateError.message);
+            }
+
+            if (latestHabit.completed) {
+               const { error: logError } = await supabase
+                 .from("habit_logs")
+                 .insert({ habit_id: id, user_id: session.user.id, status: 'completed', created_at: now })
+                 .abortSignal(controller.signal);
+               if (logError && !controller.signal.aborted) {
+                 console.error('[HabitToggle] Supabase log insert failed:', logError.message);
+               }
+            } else {
+               const startOfDay = new Date();
+               startOfDay.setHours(0, 0, 0, 0);
+               const { error: logError } = await supabase
+                 .from("habit_logs")
+                 .delete()
+                 .eq("habit_id", id)
+                 .gte("created_at", startOfDay.toISOString())
+                 .abortSignal(controller.signal);
+               if (logError && !controller.signal.aborted) {
+                 console.error('[HabitToggle] Supabase log delete failed:', logError.message);
+               }
             }
           } catch (err) {
             if (!controller.signal.aborted) {
@@ -323,7 +346,6 @@ export default function HabitScreen() {
         id: `local-${backendService.getTrustedTime()}`,
         name: newHabit.trim(),
         completed: false,
-        completedColumn: null,
         streak: 0,
         localOnly: true,
       };
