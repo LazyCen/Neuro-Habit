@@ -108,33 +108,25 @@ async def delete_account(request: Request, user=Depends(get_current_user), admin
 
 @router.post("/admin/generate-insights", include_in_schema=False)
 async def admin_generate_insights(request: Request, _: None = Depends(verify_cron_secret), admin: Client = Depends(get_admin_client)):
-    users_res = admin.table("daily_metrics").select("user_id").execute()
-    if not users_res.data:
+    res = admin.rpc("get_all_users_insights_data").execute()
+    if not res.data:
         return {"status": "no_data", "users_processed": 0}
 
-    user_ids = list({row["user_id"] for row in users_res.data})
+    from collections import defaultdict
+    user_data = defaultdict(list)
+    for row in res.data:
+        user_data[row["user_id"]].append({
+            "date": row["date"],
+            "steps": row["steps"],
+            "screen_time": row["screen_time"],
+            "mood": row["mood"],
+            "habits_completed": row["habits_completed"]
+        })
+
     processed = 0
     errors = []
 
-    def process_user(user_id):
-        metrics_res = admin.table("daily_metrics").select("*").eq("user_id", user_id).order("date", desc=True).limit(10).execute()
-        if not metrics_res.data:
-            return False, None
-
-        data_by_date = {d["date"]: d for d in metrics_res.data}
-        mood_res = admin.table("mood_logs").select("timestamp, mood_score").eq("user_id", user_id).execute()
-        for m in mood_res.data or []:
-            date = m["timestamp"].split("T")[0]
-            if date in data_by_date:
-                data_by_date[date]["mood"] = m["mood_score"]
-
-        habits_res = admin.table("habit_logs").select("created_at").eq("user_id", user_id).execute()
-        for h in habits_res.data or []:
-            date = h["created_at"].split("T")[0]
-            if date in data_by_date:
-                data_by_date[date]["habits_completed"] = data_by_date[date].get("habits_completed", 0) + 1
-
-        combined_data = list(data_by_date.values())
+    def process_user(user_id, combined_data):
         corrs = utils.calculate_correlations(combined_data)
         insights = utils.generate_natural_language_insight(corrs)
 
@@ -145,18 +137,19 @@ async def admin_generate_insights(request: Request, _: None = Depends(verify_cro
         admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
         return True, None
 
-    async def async_process_user(user_id):
+    async def async_process_user(user_id, combined_data):
         try:
-            success, err = await asyncio.to_thread(process_user, user_id)
+            success, err = await asyncio.to_thread(process_user, user_id, combined_data)
             return user_id, success, err
         except Exception as exc:
             return user_id, False, str(exc)
 
+    user_ids = list(user_data.keys())
     # Process in batches of 10 to avoid overwhelming the connection pool
     batch_size = 10
     for i in range(0, len(user_ids), batch_size):
         batch = user_ids[i:i + batch_size]
-        tasks = [async_process_user(uid) for uid in batch]
+        tasks = [async_process_user(uid, user_data[uid]) for uid in batch]
         results = await asyncio.gather(*tasks)
         for uid, success, err in results:
             if success:

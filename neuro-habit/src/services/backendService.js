@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { MMKV } from 'react-native-mmkv';
+import * as Crypto from 'expo-crypto';
 import { supabase } from './supabaseClient';
 
 const LOCAL_MOOD_LOGS_KEY = 'local_mood_logs_v1';
@@ -73,7 +74,23 @@ async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
   const baseUrl = await getActiveBackendUrl();
   
   try {
-    const response = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    const headers = {
+      ...options.headers,
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const updatedOptions = {
+      ...options,
+      headers,
+    };
+
+    const response = await fetchWithTimeout(`${baseUrl}${path}`, updatedOptions, timeoutMs);
     if (!response.ok) {
       throw new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
     }
@@ -103,7 +120,13 @@ async function getEncryptedStorage() {
   try {
     let key = await SecureStore.getItemAsync('mmkv_encryption_key');
     if (!key) {
-      key = Date.now().toString(36) + Math.random().toString(36).substring(2);
+      // Generate a cryptographically secure 256-bit (32-byte) random key.
+      // expo-crypto uses the platform CSPRNG (SecRandomCopyBytes on iOS,
+      // /dev/urandom on Android) — never Math.random().
+      const randomBytes = await Crypto.getRandomBytesAsync(32);
+      key = Array.from(randomBytes)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
       await SecureStore.setItemAsync('mmkv_encryption_key', key);
     }
     encryptedStorage = new MMKV({

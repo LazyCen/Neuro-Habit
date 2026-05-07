@@ -1,5 +1,12 @@
 -- SQL Script to set up Neuro Habit tables in Supabase
 
+-- ---------------------------------------------------------------------------
+-- Extensions
+-- uuid_generate_v4() requires uuid-ossp. Declare it first so the script is
+-- self-contained and portable across fresh PostgreSQL / Supabase instances.
+-- ---------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- Profiles Table
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
@@ -181,5 +188,49 @@ BEGIN
   DELETE FROM public.ai_insights WHERE user_id = p_user_id;
   DELETE FROM public.habits WHERE user_id = p_user_id;
   DELETE FROM public.profiles WHERE id = p_user_id;
+END;
+$$;
+
+-- Bulk Insights Data RPC
+CREATE OR REPLACE FUNCTION get_all_users_insights_data()
+RETURNS TABLE (
+  user_id UUID,
+  date TEXT,
+  steps INTEGER,
+  screen_time FLOAT,
+  mood INTEGER,
+  habits_completed INTEGER
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH recent_metrics AS (
+    SELECT dm.user_id, dm.date, dm.steps, dm.screen_time,
+           ROW_NUMBER() OVER (PARTITION BY dm.user_id ORDER BY dm.date DESC) as rn
+    FROM daily_metrics dm
+  ),
+  daily_mood AS (
+    SELECT ml.user_id, DATE(ml.timestamp) as date, MAX(ml.mood_score) as mood_score
+    FROM mood_logs ml
+    GROUP BY ml.user_id, DATE(ml.timestamp)
+  ),
+  daily_habits AS (
+    SELECT hl.user_id, DATE(hl.created_at) as date, COUNT(*)::INTEGER as habits_completed
+    FROM habit_logs hl
+    GROUP BY hl.user_id, DATE(hl.created_at)
+  )
+  SELECT 
+    rm.user_id,
+    TO_CHAR(rm.date, 'YYYY-MM-DD') as date,
+    rm.steps,
+    rm.screen_time,
+    COALESCE(dm.mood_score, 0)::INTEGER as mood,
+    COALESCE(dh.habits_completed, 0)::INTEGER as habits_completed
+  FROM recent_metrics rm
+  LEFT JOIN daily_mood dm ON rm.user_id = dm.user_id AND rm.date = dm.date
+  LEFT JOIN daily_habits dh ON rm.user_id = dh.user_id AND rm.date = dh.date
+  WHERE rm.rn <= 10;
 END;
 $$;
