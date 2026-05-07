@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, Request, HTTPException
 from typing import List
 from supabase import Client
@@ -115,36 +116,52 @@ async def admin_generate_insights(request: Request, _: None = Depends(verify_cro
     processed = 0
     errors = []
 
-    for user_id in user_ids:
+    def process_user(user_id):
+        metrics_res = admin.table("daily_metrics").select("*").eq("user_id", user_id).order("date", desc=True).limit(10).execute()
+        if not metrics_res.data:
+            return False, None
+
+        data_by_date = {d["date"]: d for d in metrics_res.data}
+        mood_res = admin.table("mood_logs").select("timestamp, mood_score").eq("user_id", user_id).execute()
+        for m in mood_res.data or []:
+            date = m["timestamp"].split("T")[0]
+            if date in data_by_date:
+                data_by_date[date]["mood"] = m["mood_score"]
+
+        habits_res = admin.table("habit_logs").select("created_at").eq("user_id", user_id).execute()
+        for h in habits_res.data or []:
+            date = h["created_at"].split("T")[0]
+            if date in data_by_date:
+                data_by_date[date]["habits_completed"] = data_by_date[date].get("habits_completed", 0) + 1
+
+        combined_data = list(data_by_date.values())
+        corrs = utils.calculate_correlations(combined_data)
+        insights = utils.generate_natural_language_insight(corrs)
+
+        if not insights:
+            return False, None
+
+        rows = [{"text": ins["text"], "type": ins["type"], "icon": ins["icon"], "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()} for ins in insights]
+        admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
+        return True, None
+
+    async def async_process_user(user_id):
         try:
-            metrics_res = admin.table("daily_metrics").select("*").eq("user_id", user_id).order("date", desc=True).limit(10).execute()
-            if not metrics_res.data:
-                continue
-
-            data_by_date = {d["date"]: d for d in metrics_res.data}
-            mood_res = admin.table("mood_logs").select("timestamp, mood_score").eq("user_id", user_id).execute()
-            for m in mood_res.data or []:
-                date = m["timestamp"].split("T")[0]
-                if date in data_by_date:
-                    data_by_date[date]["mood"] = m["mood_score"]
-
-            habits_res = admin.table("habit_logs").select("created_at").eq("user_id", user_id).execute()
-            for h in habits_res.data or []:
-                date = h["created_at"].split("T")[0]
-                if date in data_by_date:
-                    data_by_date[date]["habits_completed"] = data_by_date[date].get("habits_completed", 0) + 1
-
-            combined_data = list(data_by_date.values())
-            corrs = utils.calculate_correlations(combined_data)
-            insights = utils.generate_natural_language_insight(corrs)
-
-            if not insights:
-                continue
-
-            rows = [{"text": ins["text"], "type": ins["type"], "icon": ins["icon"], "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()} for ins in insights]
-            admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
-            processed += 1
+            success, err = await asyncio.to_thread(process_user, user_id)
+            return user_id, success, err
         except Exception as exc:
-            errors.append({"user_id": user_id, "error": str(exc)})
+            return user_id, False, str(exc)
+
+    # Process in batches of 10 to avoid overwhelming the connection pool
+    batch_size = 10
+    for i in range(0, len(user_ids), batch_size):
+        batch = user_ids[i:i + batch_size]
+        tasks = [async_process_user(uid) for uid in batch]
+        results = await asyncio.gather(*tasks)
+        for uid, success, err in results:
+            if success:
+                processed += 1
+            if err:
+                errors.append({"user_id": uid, "error": err})
 
     return {"status": "done", "users_processed": processed, "errors": errors}

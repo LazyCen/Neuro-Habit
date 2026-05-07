@@ -42,24 +42,47 @@ function getApiBaseUrls() {
   return [...new Set(urls)];
 }
 
-async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
+let activeBackendUrl = null;
+
+async function getActiveBackendUrl() {
+  if (activeBackendUrl) return activeBackendUrl;
+  
   const baseUrls = getApiBaseUrls();
-  let lastError = null;
-
-  for (const baseUrl of baseUrls) {
-    try {
-      const response = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
-      if (!response.ok) {
-        lastError = new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
-        continue;
-      }
-      return await response.json();
-    } catch (error) {
-      lastError = error;
-    }
+  if (baseUrls.length === 0) throw new Error("No API URLs configured");
+  if (baseUrls.length === 1) {
+    activeBackendUrl = baseUrls[0];
+    return activeBackendUrl;
   }
+  
+  try {
+    // Health-check ping all URLs concurrently
+    activeBackendUrl = await Promise.any(
+      baseUrls.map(async (url) => {
+        const res = await fetchWithTimeout(`${url}/`, {}, 2000);
+        if (res.ok) return url;
+        throw new Error('Ping failed');
+      })
+    );
+    return activeBackendUrl;
+  } catch (e) {
+    return baseUrls[0]; // Fallback to first if all pings fail
+  }
+}
 
-  throw lastError || new Error(`No backend base URL worked for ${path}`);
+async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
+  const baseUrl = await getActiveBackendUrl();
+  
+  try {
+    const response = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
+    }
+    return await response.json();
+  } catch (error) {
+    // Clear cache on failure so we can re-evaluate active backend on next request
+    activeBackendUrl = null;
+    throw error;
+  }
 }
 async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
   const controller = new AbortController();
@@ -346,15 +369,18 @@ export const backendService = {
 
   async isOnline() {
     const baseUrls = getApiBaseUrls();
-    for (const baseUrl of baseUrls) {
-      try {
-        const response = await fetchWithTimeout(`${baseUrl}/`, {}, 3000);
-        if (response.ok) return true;
-      } catch (e) {
-        // Try next URL
-      }
+    try {
+      await Promise.any(
+        baseUrls.map(async (baseUrl) => {
+          const response = await fetchWithTimeout(`${baseUrl}/`, {}, 3000);
+          if (response.ok) return true;
+          throw new Error('Ping failed');
+        })
+      );
+      return true;
+    } catch (e) {
+      return false;
     }
-    return false;
   },
 
   async getCachedInsights() {
