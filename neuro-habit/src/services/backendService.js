@@ -1,7 +1,5 @@
-import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
 import { MMKV } from 'react-native-mmkv';
 import * as Crypto from 'expo-crypto';
 import { supabase } from './supabaseClient';
@@ -17,28 +15,11 @@ function trimTrailingSlash(url) {
   return url.replace(/\/+$/, '');
 }
 
-function getDevHostFromExpo() {
-  const hostUri =
-    Constants?.expoConfig?.hostUri ||
-    Constants?.manifest2?.extra?.expoClient?.hostUri ||
-    Constants?.manifest?.debuggerHost;
-
-  if (!hostUri || typeof hostUri !== 'string') return null;
-  return hostUri.split(':')[0];
-}
-
 function getApiBaseUrls() {
   const urls = [];
   const configuredUrl = process.env.EXPO_PUBLIC_API_URL;
 
   if (configuredUrl) urls.push(trimTrailingSlash(configuredUrl));
-
-  if (__DEV__) {
-    const devHost = getDevHostFromExpo();
-    if (devHost) urls.push(`http://${devHost}:8000`);
-    if (Platform.OS === 'android') urls.push('http://10.0.2.2:8000');
-    urls.push('http://localhost:8000');
-  }
 
   return [...new Set(urls)];
 }
