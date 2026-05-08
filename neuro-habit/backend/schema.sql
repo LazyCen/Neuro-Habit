@@ -10,10 +10,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Profiles Table
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
-  first_name TEXT,
-  middle_name TEXT,
-  last_name TEXT,
-  avatar_url TEXT,
+  first_name TEXT CHECK (char_length(first_name) <= 100),
+  middle_name TEXT CHECK (char_length(middle_name) <= 100),
+  last_name TEXT CHECK (char_length(last_name) <= 100),
+  avatar_url TEXT CHECK (char_length(avatar_url) <= 500),
   goals JSONB,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS habits (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
-  name TEXT NOT NULL,
+  name TEXT NOT NULL CHECK (char_length(name) <= 100),
   streak INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS mood_logs (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
   mood_score INTEGER CHECK (mood_score >= 1 AND mood_score <= 10),
-  note TEXT,
+  note TEXT CHECK (char_length(note) <= 1000),
   timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS mood_logs (
 CREATE TABLE IF NOT EXISTS daily_metrics (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
-  steps INTEGER DEFAULT 0,
-  screen_time FLOAT DEFAULT 0.0,
+  steps INTEGER DEFAULT 0 CHECK (steps >= 0),
+  screen_time FLOAT DEFAULT 0.0 CHECK (screen_time >= 0.0),
   date DATE DEFAULT CURRENT_DATE,
   UNIQUE(user_id, date)
 );
@@ -59,11 +59,17 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
 CREATE TABLE IF NOT EXISTS ai_insights (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
-  text TEXT NOT NULL,
-  type TEXT, -- 'positive', 'neutral', 'warning'
-  icon TEXT,
+  text TEXT NOT NULL CHECK (char_length(text) <= 5000),
+  type TEXT CHECK (type IN ('positive', 'neutral', 'warning')), -- 'positive', 'neutral', 'warning'
+  icon TEXT CHECK (char_length(icon) <= 50),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Indexes for Performance
+CREATE INDEX IF NOT EXISTS idx_mood_logs_user_timestamp ON mood_logs (user_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_habit_logs_user_created ON habit_logs (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits (user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_insights_user_created ON ai_insights (user_id, created_at DESC);
 
 -- Enable RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
@@ -94,8 +100,10 @@ CREATE POLICY "Users can delete their own mood logs" ON mood_logs FOR DELETE USI
 CREATE POLICY "Users can view their own metrics" ON daily_metrics FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert their own metrics" ON daily_metrics FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can update their own metrics" ON daily_metrics FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete their own metrics" ON daily_metrics FOR DELETE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can view their own insights" ON ai_insights FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can delete their own insights" ON ai_insights FOR DELETE USING (auth.uid() = user_id);
 
 -- Trigger to create a profile after signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -110,7 +118,7 @@ BEGIN
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
@@ -154,11 +162,12 @@ CREATE OR REPLACE FUNCTION replace_user_insights(p_user_id UUID, p_insights JSON
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   insight RECORD;
 BEGIN
-  IF auth.uid() IS NOT NULL AND auth.uid() != p_user_id THEN
+  IF (auth.uid() IS NULL OR auth.uid() != p_user_id) AND (auth.role() <> 'service_role') THEN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
 
@@ -185,9 +194,10 @@ CREATE OR REPLACE FUNCTION delete_user_account(p_user_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF auth.uid() IS NOT NULL AND auth.uid() != p_user_id THEN
+  IF (auth.uid() IS NULL OR auth.uid() != p_user_id) AND (auth.role() <> 'service_role') THEN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
 
@@ -213,10 +223,11 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF auth.uid() IS NOT NULL THEN
-    RAISE EXCEPTION 'Unauthorized: Admins only';
+  IF auth.role() <> 'service_role' THEN
+    RAISE EXCEPTION 'Unauthorized: Service role only';
   END IF;
 
   RETURN QUERY
@@ -260,9 +271,10 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF auth.uid() IS NOT NULL AND auth.uid() != p_user_id THEN
+  IF (auth.uid() IS NULL OR auth.uid() != p_user_id) AND (auth.role() <> 'service_role') THEN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
 

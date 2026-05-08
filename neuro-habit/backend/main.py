@@ -2,12 +2,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
-from core.config import ALLOWED_ORIGINS
+from core.config import ALLOWED_ORIGINS, SENTRY_DSN
 from core.rate_limit import limiter
+import sentry_sdk
+import os
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
 from routes.api import router
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 app = FastAPI(title="Neuro Habit API")
 app.state.limiter = limiter
+
+# Trust X-Forwarded-For headers from reverse proxies (ALB, Nginx, etc.)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 app.add_exception_handler(
     RateLimitExceeded,
@@ -32,4 +45,5 @@ app.include_router(router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

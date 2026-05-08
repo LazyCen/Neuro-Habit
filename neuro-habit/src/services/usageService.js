@@ -86,7 +86,40 @@ export const usageService = {
     status.hasGoogleFit = Boolean(GoogleFit) || await isGoogleFitInstalled();
     status.hasAnyProvider = status.hasHealthConnect || status.hasGoogleFit;
     status.recommendedInstall = status.isHealthConnectSupported ? 'Health Connect' : 'Google Fit';
+    
+    // Check if already authorized (silently)
+    status.isAuthorized = await this.hasStepPermission();
+    
     return status;
+  },
+
+  async hasStepPermission() {
+    if (Platform.OS !== 'android') {
+      return await this.hasPedometerPermission();
+    }
+
+    // Android: check Health Connect then Google Fit
+    if (HealthConnect && Platform.Version >= ANDROID_VERSION_PIE) {
+      try {
+        const granted = typeof HealthConnect.getGrantedPermissions === 'function'
+          ? await HealthConnect.getGrantedPermissions()
+          : [];
+        if (Array.isArray(granted) && granted.some(p => (p.recordType === 'Steps' || p.recordType === 'steps'))) {
+          return true;
+        }
+      } catch (_e) {}
+    }
+
+    if (GoogleFit) {
+      try {
+        if (typeof GoogleFit.checkIsAuthorized === 'function') {
+          await GoogleFit.checkIsAuthorized();
+          return GoogleFit.isAuthorized === true;
+        }
+      } catch (_e) {}
+    }
+
+    return false;
   },
 
   async requestStepPermissions() {
@@ -234,23 +267,14 @@ export const usageService = {
       // Only attempt Health Connect if OS supports it and module loaded
       if (HealthConnect && Platform.Version >= ANDROID_VERSION_PIE) {
         try {
-          let isAvailable = false;
-          if (typeof HealthConnect.getSdkStatus === 'function') {
-            const sdkStatus = await HealthConnect.getSdkStatus();
-            isAvailable = sdkStatus === HC_SDK_AVAILABLE;
-          } else if (typeof HealthConnect.initialize === 'function') {
-            isAvailable = true; // Will confirm via initialize()
-          }
-
-          if (isAvailable && typeof HealthConnect.initialize === 'function') {
+          // FIX: Decouple data retrieval from permission requests.
+          // First, check if we already have permission without triggering any initialization side-effects.
+          const isAuthorized = await this.hasStepPermission();
+          
+          if (isAuthorized && typeof HealthConnect.initialize === 'function') {
             const initialized = await HealthConnect.initialize();
-            if (initialized && typeof HealthConnect.requestPermission === 'function') {
-              await HealthConnect.requestPermission([
-                { accessType: 'read', recordType: 'Steps' },
-              ]);
-
-              if (typeof HealthConnect.readRecords === 'function') {
-                const result = await HealthConnect.readRecords('Steps', {
+            if (initialized && typeof HealthConnect.readRecords === 'function') {
+              const result = await HealthConnect.readRecords('Steps', {
                   timeRangeFilter: {
                     operator: 'between',
                     startTime: startOfDay.toISOString(),
@@ -322,11 +346,9 @@ export const usageService = {
         return 0;
       }
 
-      if (typeof Pedometer.requestPermissionsAsync === 'function') {
-        const permission = await Pedometer.requestPermissionsAsync();
-        if (!permission?.granted) {
-          return 0;
-        }
+      const hasPerm = await this.hasPedometerPermission();
+      if (!hasPerm) {
+        return 0;
       }
 
       const now = new Date();

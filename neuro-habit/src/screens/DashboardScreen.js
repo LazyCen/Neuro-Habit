@@ -72,9 +72,9 @@ export default function DashboardScreen() {
   const checkPermissions = async () => {
     const usage = await usageService.hasPermission();
     const stepProviders = await usageService.getStepProviderStatus();
-    const pedometer = stepProviders.hasAnyProvider || await usageService.hasPedometerPermission();
+    
     setHasUsagePerm(usage);
-    setHasPedometerPerm(pedometer);
+    setHasPedometerPerm(stepProviders.isAuthorized);
     setStepProviderStatus(stepProviders);
   };
 
@@ -158,7 +158,9 @@ export default function DashboardScreen() {
   const userName = metadata.username || 
                    metadata.first_name || 
                    (session?.user?.email ? session.user.email.split('@')[0] : "Friend");
-  const capitalizedName = userName.charAt(0).toUpperCase() + userName.slice(1);
+  const capitalizedName = userName && userName.length > 0 
+    ? userName.charAt(0).toUpperCase() + userName.slice(1) 
+    : "Friend";
   const hasUsername = !!metadata.username;
   const isGuest = session?.user?.email === 'guest@example.com';
   const avatarEmoji = metadata.avatar_emoji || "🐶";

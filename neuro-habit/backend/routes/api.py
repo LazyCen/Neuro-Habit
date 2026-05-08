@@ -1,4 +1,5 @@
 import asyncio
+from tenacity import retry, stop_after_attempt, wait_exponential
 from fastapi import APIRouter, Depends, Request, HTTPException
 from typing import List
 from supabase import Client
@@ -57,6 +58,15 @@ async def log_mood(request: Request, log: MoodLog, user=Depends(get_current_user
     response = check_supabase_response(client.table("mood_logs").insert(data).execute())
     return response.data[0] if response.data else {"status": "error"}
 
+@router.post("/mood/bulk")
+@limiter.limit(LIMIT_WRITE)
+async def log_mood_bulk(request: Request, logs: List[MoodLog], user=Depends(get_current_user), client: Client = Depends(get_user_client)):
+    if not logs:
+        return []
+    data = [{"user_id": user.id, "mood_score": log.mood, "note": log.note, "timestamp": log.timestamp.isoformat()} for log in logs]
+    response = check_supabase_response(client.table("mood_logs").insert(data).execute())
+    return response.data if response.data else {"status": "error"}
+
 @router.post("/metrics")
 @limiter.limit(LIMIT_WRITE)
 async def update_metrics(request: Request, metrics: DailyMetrics, user=Depends(get_current_user), client: Client = Depends(get_user_client)):
@@ -64,32 +74,53 @@ async def update_metrics(request: Request, metrics: DailyMetrics, user=Depends(g
     response = check_supabase_response(client.table("daily_metrics").upsert(data, on_conflict="user_id,date").execute())
     return response.data[0] if response.data else {"status": "error"}
 
+@router.post("/metrics/bulk")
+@limiter.limit(LIMIT_WRITE)
+async def update_metrics_bulk(request: Request, metrics_list: List[DailyMetrics], user=Depends(get_current_user), client: Client = Depends(get_user_client)):
+    if not metrics_list:
+        return []
+    data = [{"user_id": user.id, "steps": metrics.steps, "screen_time": metrics.screen_time, "date": metrics.date.isoformat()} for metrics in metrics_list]
+    response = check_supabase_response(client.table("daily_metrics").upsert(data, on_conflict="user_id,date").execute())
+    return response.data if response.data else {"status": "error"}
+
 
 @router.delete("/account")
 @limiter.limit(LIMIT_WRITE)
 async def delete_account(request: Request, user=Depends(get_current_user), admin: Client = Depends(get_admin_client)):
     user_id = user.id
+
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True
+    )
+    def _delete_auth_user_resiliently():
+        # Deleting the auth user will trigger ON DELETE CASCADE for all associated data 
+        # in the public schema (profiles, habits, logs, etc.) defined in schema.sql.
+        # This ensures the operation is atomic from the database's perspective.
+        return admin.auth.admin.delete_user(user_id)
+
     try:
-        # First, mark the user as 'deleting' in metadata to prevent concurrent operations
-        # and signal that the account is in a terminal state.
+        # First, mark the user as 'deleting' in metadata. This signals intent and 
+        # can be used to prevent certain operations if the deletion takes time.
         admin.auth.admin.update_user_by_id(
             user_id, 
             {"user_metadata": {"account_delete_requested": True}}
         )
 
-        # Wipe user data atomically using the RPC
-        rpc_res = admin.rpc("delete_user_account", {"p_user_id": user_id}).execute()
-        
-        # Finally, delete the auth user record itself
-        # This is the point of no return for the session
-        admin.auth.admin.delete_user(user_id)
+        # Execute auth deletion with retry logic. 
+        # We no longer call the manual 'delete_user_account' RPC because the 
+        # database-level foreign key cascades handle it more reliably and atomically.
+        _delete_auth_user_resiliently()
         
         return {"status": "success", "message": "Account and all associated data deleted successfully."}
     except Exception as exc:
-        print(f"Error during account deletion for user {user_id}: {str(exc)}")
+        print(f"Error during resilient account deletion for user {user_id}: {str(exc)}")
+        # If we reach here, the user still exists and their data is intact (because we didn't wipe it first).
+        # This avoids the 'zombie user' state.
         raise HTTPException(
             status_code=500, 
-            detail="A critical error occurred during account deletion. Please contact support if your session persists."
+            detail="A critical error occurred during account deletion. Your data is safe. Please try again later or contact support."
         )
 
 

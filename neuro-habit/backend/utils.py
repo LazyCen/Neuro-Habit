@@ -28,6 +28,7 @@ def calculate_correlations(data: List[Dict]):
 import os
 import json
 import logging
+import openai
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 try:
@@ -37,6 +38,17 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Initialize OpenAI client as a module-level singleton
+_openai_client = None
+
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            _openai_client = openai.AsyncOpenAI(api_key=api_key)
+    return _openai_client
+
 @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def _call_openai(client, prompt):
     response = await client.chat.completions.create(
@@ -45,7 +57,7 @@ async def _call_openai(client, prompt):
             {"role": "system", "content": "You are an insightful wellness assistant."},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=150,
+        max_tokens=300,
         temperature=0.7,
         response_format={"type": "json_object"}
     )
@@ -55,11 +67,9 @@ async def generate_natural_language_insight(correlations: Dict):
     insights = []
     
     # Try using OpenAI if the key is available
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key:
+    client = get_openai_client()
+    if client:
         try:
-            import openai
-            client = openai.AsyncOpenAI(api_key=api_key)
             prompt = (
                 f"Based on the following user data correlations, generate 1 to 2 personalized, "
                 f"short insights or recommendations for a habit-tracking app. "
@@ -80,6 +90,11 @@ async def generate_natural_language_insight(correlations: Dict):
                 return parsed["insights"]
             elif isinstance(parsed, dict):
                 return [parsed]
+        except json.JSONDecodeError as e:
+            logger.error(f"OpenAI returned malformed or truncated JSON: {e}")
+            if sentry_sdk:
+                sentry_sdk.capture_exception(e)
+            # Fallback to rule-based logic
         except Exception as e:
             logger.error(f"OpenAI insight generation failed: {e}", exc_info=True)
             if sentry_sdk:

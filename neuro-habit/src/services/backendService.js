@@ -2,6 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MMKV } from 'react-native-mmkv';
 import * as Crypto from 'expo-crypto';
+import Constants from 'expo-constants';
 import { supabase } from './supabaseClient';
 
 const LOCAL_MOOD_LOGS_KEY = 'local_mood_logs_v1';
@@ -10,8 +11,11 @@ const PENDING_METRICS_KEY = 'pending_metrics_v1';
 const CACHED_INSIGHTS_KEY = 'cached_insights_v1';
 
 let timeOffsetMs = 0;
+let timeSynced = false;
+let isFetchingTime = false;
 
 function trimTrailingSlash(url) {
+  if (!url) return '';
   return url.replace(/\/+$/, '');
 }
 
@@ -19,9 +23,24 @@ function getApiBaseUrls() {
   const urls = [];
   const configuredUrl = process.env.EXPO_PUBLIC_API_URL;
 
-  if (configuredUrl) urls.push(trimTrailingSlash(configuredUrl));
+  if (configuredUrl) {
+    urls.push(trimTrailingSlash(configuredUrl));
+  }
 
-  return [...new Set(urls)];
+  // In development, automatically attempt to resolve the host machine's IP
+  // to support real devices without hardcoding local IPs.
+  if (__DEV__) {
+    const debuggerHost = Constants.expoConfig?.hostUri;
+    if (debuggerHost) {
+      const hostIp = debuggerHost.split(':')[0];
+      // Assume backend is running on port 8000 if not specified
+      urls.push(`http://${hostIp}:8000`);
+    }
+    // Fallback to localhost for emulators
+    urls.push('http://localhost:8000');
+  }
+
+  return [...new Set(urls.filter(Boolean))];
 }
 
 let activeBackendUrl = null;
@@ -272,6 +291,70 @@ async function postMetricsOnline(steps, screenTime) {
   });
 }
 
+async function postMoodBulkOnline(moods) {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    
+    return await fetchFromBackend(`/mood/bulk${userId ? `?user_id=${userId}` : ''}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(moods),
+    });
+  } catch (backendError) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) throw new Error('No authenticated user for Supabase mood bulk insert');
+    
+    const payloads = moods.map(m => ({
+      user_id: userId,
+      mood_score: m.mood,
+      note: m.note || null,
+      timestamp: m.timestamp || new Date().toISOString(),
+    }));
+    
+    const { data, error } = await supabase
+      .from('mood_logs')
+      .insert(payloads)
+      .select();
+      
+    if (error) throw error;
+    return { success: true, via: 'supabase', data };
+  }
+}
+
+async function postMetricsBulkOnline(metricsList) {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    
+    return await fetchFromBackend(`/metrics/bulk${userId ? `?user_id=${userId}` : ''}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metricsList),
+    });
+  } catch (backendError) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) throw new Error('No authenticated user for Supabase metrics bulk upsert');
+    
+    const payloads = metricsList.map(m => ({
+      user_id: userId,
+      steps: m.steps,
+      screen_time: m.screen_time,
+      date: m.date || new Date().toISOString().slice(0, 10),
+    }));
+    
+    const { data, error } = await supabase
+      .from('daily_metrics')
+      .upsert(payloads, { onConflict: 'user_id,date' })
+      .select();
+      
+    if (error) throw error;
+    return { success: true, via: 'supabase', data };
+  }
+}
+
 async function saveMetricsViaSupabase(steps, screenTime) {
   const { data: { session } } = await supabase.auth.getSession();
   const userId = session?.user?.id;
@@ -348,16 +431,39 @@ async function createHabitViaSupabase(name) {
 }
 
 export const backendService = {
-  async fetchTrustedTime() {
+  async fetchTrustedTime(retryCount = 0) {
+    if (timeSynced) return;
+    
+    // Prevent multiple concurrent fetch chains from starting at once
+    if (retryCount === 0 && isFetchingTime) return;
+    isFetchingTime = true;
+
     try {
       const response = await fetchFromBackend('/time');
       if (response && response.utc_time) {
         const serverTime = new Date(response.utc_time).getTime();
         const localTime = Date.now();
         timeOffsetMs = serverTime - localTime;
+        timeSynced = true;
+        isFetchingTime = false;
+        console.log(`[backendService] Trusted time synchronized. Offset: ${timeOffsetMs}ms`);
+      } else {
+        isFetchingTime = false;
+        console.warn('[backendService] /time returned successfully but without utc_time field');
       }
     } catch (e) {
-      console.warn('Failed to fetch trusted time, using local clock', e);
+      const MAX_RETRIES = 10;
+      if (retryCount < MAX_RETRIES) {
+        // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 512s, 1024s (~17 mins total)
+        const delay = Math.pow(2, retryCount + 1) * 1000;
+        console.warn(`[backendService] Failed to fetch trusted time. Retrying in ${delay / 1000}s...`);
+        setTimeout(() => {
+          this.fetchTrustedTime(retryCount + 1);
+        }, delay);
+      } else {
+        isFetchingTime = false;
+        console.error('[backendService] Max retries reached for trusted time fetch. Using local clock.', e);
+      }
     }
   },
 
@@ -399,6 +505,11 @@ export const backendService = {
     const isOnline = await this.isOnline();
     if (!isOnline) return;
 
+    // Retry fetching trusted time if it failed earlier (e.g. during tunnel traversal)
+    if (!timeSynced) {
+      this.fetchTrustedTime().catch(() => {});
+    }
+
     const MAX_RETRIES = 8;
 
     const shouldRetry = (item) => {
@@ -430,16 +541,23 @@ export const backendService = {
     const pendingMoods = await getArrayStorage(PENDING_MOODS_KEY);
     if (pendingMoods.length > 0) {
       const remainingMoods = [];
+      const moodsToSync = [];
       for (const item of pendingMoods) {
         if (!shouldRetry(item)) {
           if ((item.retryCount || 0) < MAX_RETRIES) remainingMoods.push(item);
           continue;
         }
+        moodsToSync.push(item);
+      }
+      if (moodsToSync.length > 0) {
         try {
-          await postMoodOnline(item.mood, item.note);
+          const payload = moodsToSync.map(m => ({ mood: m.mood, note: m.note, timestamp: m.queuedAt || new Date().toISOString() }));
+          await postMoodBulkOnline(payload);
         } catch (e) {
-          const updatedItem = markFailure(item, e, 'mood');
-          if (updatedItem) remainingMoods.push(updatedItem);
+          for (const item of moodsToSync) {
+            const updatedItem = markFailure(item, e, 'mood');
+            if (updatedItem) remainingMoods.push(updatedItem);
+          }
         }
       }
       await setArrayStorage(PENDING_MOODS_KEY, remainingMoods);
@@ -448,16 +566,27 @@ export const backendService = {
     const pendingMetrics = await getArrayStorage(PENDING_METRICS_KEY);
     if (pendingMetrics.length > 0) {
       const remainingMetrics = [];
+      const metricsToSync = [];
       for (const item of pendingMetrics) {
         if (!shouldRetry(item)) {
           if ((item.retryCount || 0) < MAX_RETRIES) remainingMetrics.push(item);
           continue;
         }
+        metricsToSync.push(item);
+      }
+      if (metricsToSync.length > 0) {
         try {
-          await postMetricsOnline(item.steps, item.screenTime);
+          const payload = metricsToSync.map(m => ({
+            steps: m.steps,
+            screen_time: m.screenTime,
+            date: new Date(m.queuedAt || Date.now()).toISOString().slice(0, 10)
+          }));
+          await postMetricsBulkOnline(payload);
         } catch (e) {
-          const updatedItem = markFailure(item, e, 'metrics');
-          if (updatedItem) remainingMetrics.push(updatedItem);
+          for (const item of metricsToSync) {
+            const updatedItem = markFailure(item, e, 'metrics');
+            if (updatedItem) remainingMetrics.push(updatedItem);
+          }
         }
       }
       await setArrayStorage(PENDING_METRICS_KEY, remainingMetrics);
@@ -554,7 +683,7 @@ export const backendService = {
     });
   },
 
-  async purgeAllLocalData() {
+  async purgeAllLocalData(force = true) {
     try {
       // 1. Clear encrypted MMKV instance (Moods, Metrics, etc.)
       const storage = await getEncryptedStorage();

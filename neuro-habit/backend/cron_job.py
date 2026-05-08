@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000")
+API_URL = os.environ.get("API_URL")
 CRON_SECRET = os.environ.get("CRON_SECRET")
 
 def run_insights_generation():
@@ -14,6 +14,10 @@ def run_insights_generation():
     Triggers the background insight generation process.
     This simulates a cron job hitting the secure /admin endpoint.
     """
+    if not API_URL:
+        print("Error: API_URL is not configured properly.")
+        return
+
     if not CRON_SECRET:
         print("Error: CRON_SECRET is not configured properly.")
         return

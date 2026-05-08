@@ -130,7 +130,7 @@ export const AuthProvider = ({ children }) => {
 
   const signOut = async (shouldPurge = false) => {
     if (shouldPurge) {
-      await backendService.purgeAllLocalData();
+      await backendService.purgeAllLocalData(true);
     }
     await supabase.auth.signOut();
     setSession(null);

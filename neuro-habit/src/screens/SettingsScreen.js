@@ -93,7 +93,7 @@ export default function SettingsScreen() {
       await backendService.deleteAccount();
 
       setShowDeleteConfirm(false);
-      await signOut();
+      await signOut(true);
       setMessageModal({ visible: true, title: "Account Deleted", message: "Your app data was removed and you have been signed out." });
     } catch (error) {
       setMessageModal({ visible: true, title: "Delete Failed", message: error?.message || "Unable to delete account right now." });
@@ -284,7 +284,7 @@ export default function SettingsScreen() {
 
           <View style={themedStyles.divider} />
 
-          <TouchableOpacity style={themedStyles.settingRow} onPress={signOut}>
+          <TouchableOpacity style={themedStyles.settingRow} onPress={() => signOut(true)}>
              <View style={themedStyles.settingLeft}>
               <View style={[themedStyles.iconBox, { backgroundColor: colors.subtext + '33' }]}>
                 <Ionicons name="log-out" size={20} color={colors.subtext} />
