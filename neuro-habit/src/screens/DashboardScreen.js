@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, Text, View, StyleSheet, ActivityIndicator, TouchableOpacity, Linking } from "react-native";
+import { ScrollView, Text, View, StyleSheet, ActivityIndicator, TouchableOpacity, Linking, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,7 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export default function DashboardScreen() {
   const { theme: colors } = useTheme();
   const themedStyles = styles(colors);
-  const { data, loading, isRefreshingData, refresh } = useDashboard();
+  const { data, loading, isRefreshingData, isOfflineMode, refresh } = useDashboard();
   const { session } = useAuth();
   const navigation = useNavigation();
   const [hasUsagePerm, setHasUsagePerm] = React.useState(true);
@@ -33,6 +33,13 @@ export default function DashboardScreen() {
   const [usernameLoading, setUsernameLoading] = React.useState(false);
   const [showHealthModal, setShowHealthModal] = React.useState(false);
   const [permissionTypeToRequest, setPermissionTypeToRequest] = React.useState(null);
+  const lastRefreshRef = React.useRef(Date.now());
+  const REFRESH_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+
+  const handleRefresh = React.useCallback(() => {
+    refresh();
+    lastRefreshRef.current = Date.now();
+  }, [refresh]);
 
   React.useEffect(() => {
     if (isRefreshingData) {
@@ -65,8 +72,12 @@ export default function DashboardScreen() {
   useFocusEffect(
     React.useCallback(() => {
       checkPermissions();
-      refresh();
-    }, [])
+      
+      const now = Date.now();
+      if (now - lastRefreshRef.current > REFRESH_THROTTLE_MS) {
+        handleRefresh();
+      }
+    }, [handleRefresh])
   );
 
   const checkPermissions = async () => {
@@ -86,21 +97,54 @@ export default function DashboardScreen() {
       } else if (type === 'health') {
         const stepPermission = await usageService.requestStepPermissions();
         if (!stepPermission.granted && !stepPermission.hasAnyProvider) {
-          await Linking.openURL(
-            "https://play.google.com/store/search?q=Health%20Connect%20Google%20Fit&c=apps"
-          ).catch(() => {});
+          if (Platform.OS === 'android') {
+            await Linking.openURL(
+              "https://play.google.com/store/search?q=Health%20Connect%20Google%20Fit&c=apps"
+            ).catch(() => {});
+          }
           await usageService.requestPedometerPermission();
         }
       }
       
       // Re-check permissions after requesting
-      setTimeout(() => {
-        checkPermissions();
-        refresh();
+      setTimeout(async () => {
+        await checkPermissions();
+        handleRefresh();
       }, 500);
     } catch (error) {
       console.error('Error handling permission request:', error);
-      refresh();
+      handleRefresh();
+    } finally {
+      setPermissionLoading(false);
+    }
+  };
+
+  const handleConnectAll = async () => {
+    setPermissionLoading(true);
+    try {
+      // 1. Request Usage Stats
+      if (!hasUsagePerm) {
+        await usageService.requestPermission();
+      }
+      
+      // 2. Request Health/Step data
+      if (!hasPedometerPerm) {
+        const stepPermission = await usageService.requestStepPermissions();
+        if (!stepPermission.granted && !stepPermission.hasAnyProvider && Platform.OS === 'android') {
+          await Linking.openURL(
+            "https://play.google.com/store/search?q=Health%20Connect%20Google%20Fit&c=apps"
+          ).catch(() => {});
+        }
+        await usageService.requestPedometerPermission();
+      }
+
+      // Small delay for OS to update settings before re-checking
+      setTimeout(async () => {
+        await checkPermissions();
+        handleRefresh();
+      }, 800);
+    } catch (error) {
+      console.error('Error in handleConnectAll:', error);
     } finally {
       setPermissionLoading(false);
     }
@@ -131,23 +175,33 @@ export default function DashboardScreen() {
     }
   };
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <View style={themedStyles.loadingContainer}>
         <PremiumBackground />
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={themedStyles.loadingText}>Analyzing your data...</Text>
+        <Text style={themedStyles.loadingText}>
+          {isOfflineMode ? "Retrying connection..." : "Analyzing your data..."}
+        </Text>
       </View>
     );
   }
 
-  if (!data) {
+  if (!data || (isOfflineMode && data.steps === 0 && data.screenTime === 0)) {
     return (
       <View style={themedStyles.loadingContainer}>
         <PremiumBackground />
-        <Text style={themedStyles.loadingText}>Failed to load data.</Text>
-        <TouchableOpacity style={[themedStyles.syncButton, { marginTop: 16 }]} onPress={refresh}>
-          <Text style={themedStyles.syncButtonText}>Retry</Text>
+        <Ionicons name="cloud-offline-outline" size={48} color={colors.subtext} style={{ marginBottom: 16 }} />
+        <Text style={themedStyles.loadingText}>
+          {isOfflineMode ? "Server unreachable" : "No data available"}
+        </Text>
+        <Text style={[themedStyles.syncSubtext, { textAlign: 'center', paddingHorizontal: 40 }]}>
+          {isOfflineMode 
+            ? "We're having trouble connecting to the server. Please check your internet connection."
+            : "We couldn't find any data for your account. Try refreshing or connecting your devices."}
+        </Text>
+        <TouchableOpacity style={[themedStyles.syncButton, { marginTop: 16, paddingHorizontal: 24, paddingVertical: 12 }]} onPress={handleRefresh}>
+          <Text style={themedStyles.syncButtonText}>Retry Connection</Text>
         </TouchableOpacity>
       </View>
     );
@@ -180,7 +234,13 @@ export default function DashboardScreen() {
           <View>
             <Text style={themedStyles.greeting}>{getGreeting()},</Text>
             <Text style={themedStyles.title}>{capitalizedName} 👋</Text>
-            {!loading && (
+            {isOfflineMode && (
+              <View style={[themedStyles.updatingBadge, { backgroundColor: colors.red + "18", borderColor: colors.red + "40" }]}>
+                <Ionicons name="cloud-offline" size={12} color={colors.red} />
+                <Text style={[themedStyles.updatingText, { color: colors.red }]}>Offline Mode</Text>
+              </View>
+            )}
+            {!loading && !isOfflineMode && (
               <Animated.View
                 style={[themedStyles.updatingBadge, animatedBadgeStyle]}
               >
@@ -248,7 +308,7 @@ export default function DashboardScreen() {
                     Steps are unavailable until Motion/Fitness permission is granted.
                   </Text>
                 )}
-                {!stepProviderStatus.hasAnyProvider && (
+                {Platform.OS === 'android' && !stepProviderStatus.hasAnyProvider && (
                   <Text style={themedStyles.syncSubtext}>
                     {stepProviderStatus.isHealthConnectSupported 
                       ? "Install Health Connect to enable real step counting."
@@ -256,45 +316,17 @@ export default function DashboardScreen() {
                   </Text>
                 )}
                 <View style={themedStyles.syncButtons}>
-                  {!hasUsagePerm && (
-                    <TouchableOpacity 
-                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { marginRight: 8 }]} 
-                      onPress={() => { setPermissionTypeToRequest('usage'); setShowHealthModal(true); }}
-                      disabled={permissionLoading}
-                    >
-                      {permissionLoading ? (
-                        <ActivityIndicator size="small" color="white" />
-                      ) : (
-                        <Text style={themedStyles.syncButtonText}>Usage Stats</Text>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                  {!hasPedometerPerm && (
-                    <TouchableOpacity 
-                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { marginRight: 8 }]} 
-                      onPress={() => { setPermissionTypeToRequest('health'); setShowHealthModal(true); }}
-                      disabled={permissionLoading}
-                    >
-                      {permissionLoading ? (
-                        <ActivityIndicator size="small" color="white" />
-                      ) : (
-                        <Text style={themedStyles.syncButtonText}>Step Counter</Text>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                  {!stepProviderStatus.hasAnyProvider && (
-                    <TouchableOpacity 
-                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { marginRight: 8 }]} 
-                      onPress={() => { setPermissionTypeToRequest('health'); setShowHealthModal(true); }}
-                      disabled={permissionLoading}
-                    >
-                      {permissionLoading ? (
-                        <ActivityIndicator size="small" color="white" />
-                      ) : (
-                        <Text style={themedStyles.syncButtonText}>Check Step Apps</Text>
-                      )}
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity 
+                    style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { paddingHorizontal: 20 }]} 
+                    onPress={() => setShowHealthModal(true)}
+                    disabled={permissionLoading}
+                  >
+                    {permissionLoading ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text style={themedStyles.syncButtonText}>Enable All Data Sync</Text>
+                    )}
+                  </TouchableOpacity>
                 </View>
               </View>
             </Card>
@@ -350,7 +382,7 @@ export default function DashboardScreen() {
         visible={showHealthModal} 
         onConfirm={() => {
           setShowHealthModal(false);
-          handleConnect(permissionTypeToRequest);
+          handleConnectAll();
         }} 
         onCancel={() => setShowHealthModal(false)}
         loading={permissionLoading}

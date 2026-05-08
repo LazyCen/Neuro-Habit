@@ -12,6 +12,16 @@ import { ThemeProvider, useTheme } from "./src/context/ThemeContext";
 import { notificationService } from "./src/services/notificationService";
 import { backendService } from "./src/services/backendService";
 import { registerBackgroundHealthSync } from "./src/services/backgroundSync";
+import * as Sentry from '@sentry/react-native';
+
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || '', // Fallback to empty if not set
+  tracesSampleRate: 1.0,
+  _experiments: {
+    // profilesSampleRate is relative to tracesSampleRate
+    profilesSampleRate: 1.0,
+  },
+});
 
 const NavigationWrapper = () => {
   const { theme: colors, isDark } = useTheme();
@@ -29,9 +39,12 @@ const NavigationWrapper = () => {
   }), [isDark, colors]);
 
   return (
-    <NavigationContainer theme={MyTheme}>
-      <RootNavigator />
-    </NavigationContainer>
+    <>
+      <StatusBar style={isDark ? "light" : "dark"} />
+      <NavigationContainer theme={MyTheme}>
+        <RootNavigator />
+      </NavigationContainer>
+    </>
   );
 };
 
@@ -48,7 +61,6 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
-          <StatusBar style="auto" />
           <NavigationWrapper />
         </AuthProvider>
       </ThemeProvider>

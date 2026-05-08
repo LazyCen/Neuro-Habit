@@ -8,7 +8,8 @@ import {
   ActivityIndicator, 
   Dimensions,
   Platform,
-  Modal
+  Modal,
+  Linking
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
@@ -406,6 +407,16 @@ export default function AuthScreen() {
             </Text>
           </TouchableOpacity>
         </Animated.View>
+
+        <Animated.View 
+          entering={FadeInUp.delay(800)}
+          style={themedStyles.legalFooter}
+        >
+          <Text style={themedStyles.legalText}>By continuing, you agree to our </Text>
+          <TouchableOpacity onPress={() => Linking.openURL('https://neurohabit.app/privacy')}>
+            <Text style={themedStyles.legalLink}>Privacy Policy</Text>
+          </TouchableOpacity>
+        </Animated.View>
       </View>
     </KeyboardAwareScrollView>
   );
@@ -637,5 +648,23 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
   forgotSendText: {
     color: colors.white,
     fontWeight: "700",
-  }
+  },
+  legalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+    opacity: 0.8,
+  },
+  legalText: {
+    color: TEXT_MUTED,
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  legalLink: {
+    color: PRIMARY,
+    fontSize: 12,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
 });

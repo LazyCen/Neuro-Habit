@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Modal } from "react-native";
+import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Modal, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
@@ -23,6 +23,7 @@ export default function SettingsScreen() {
   const [lastName, setLastName] = React.useState("");
   const [username, setUsername] = React.useState("");
   const [selectedAvatar, setSelectedAvatar] = React.useState("🐶");
+  const [clearingCache, setClearingCache] = React.useState(false);
 
   const themedStyles = styles(colors);
   const metadata = session?.user?.user_metadata || {};
@@ -73,6 +74,26 @@ export default function SettingsScreen() {
       setMessageModal({ visible: true, title: "Update Failed", message: error?.message || "Unable to save profile." });
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const handleClearCache = async () => {
+    setClearingCache(true);
+    try {
+      await backendService.purgeAllLocalData(true);
+      setMessageModal({
+        visible: true,
+        title: "Cache Cleared",
+        message: "Your local data cache and offline sync queues have been purged successfully.",
+      });
+    } catch (error) {
+      setMessageModal({
+        visible: true,
+        title: "Clear Failed",
+        message: error?.message || "Unable to clear local cache at this time.",
+      });
+    } finally {
+      setClearingCache(false);
     }
   };
 
@@ -284,6 +305,22 @@ export default function SettingsScreen() {
 
           <View style={themedStyles.divider} />
 
+          <TouchableOpacity style={themedStyles.settingRow} onPress={handleClearCache} disabled={clearingCache}>
+            <View style={themedStyles.settingLeft}>
+              <View style={[themedStyles.iconBox, { backgroundColor: colors.warning + '33' }]}>
+                <Ionicons name="refresh" size={20} color={colors.warning} />
+              </View>
+              <Text style={themedStyles.settingText}>Clear Local Cache</Text>
+            </View>
+            {clearingCache ? (
+              <ActivityIndicator size="small" color={colors.subtext} />
+            ) : (
+              <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
+            )}
+          </TouchableOpacity>
+
+          <View style={themedStyles.divider} />
+
           <TouchableOpacity style={themedStyles.settingRow} onPress={() => signOut(true)}>
              <View style={themedStyles.settingLeft}>
               <View style={[themedStyles.iconBox, { backgroundColor: colors.subtext + '33' }]}>
@@ -303,7 +340,26 @@ export default function SettingsScreen() {
               <Text style={[themedStyles.settingText, { color: colors.danger }]}>Delete Account and Data</Text>
             </View>
           </TouchableOpacity>
+        </View>
 
+        <View style={themedStyles.section}>
+          <Text style={themedStyles.sectionTitle}>Legal</Text>
+          <TouchableOpacity 
+            style={themedStyles.settingRow} 
+            onPress={() => Linking.openURL('https://neurohabit.app/privacy')}
+          >
+            <View style={themedStyles.settingLeft}>
+              <View style={[themedStyles.iconBox, { backgroundColor: colors.secondary + '33' }]}>
+                <Ionicons name="shield-checkmark" size={20} color={colors.secondary} />
+              </View>
+              <Text style={themedStyles.settingText}>Privacy Policy</Text>
+            </View>
+            <Ionicons name="open-outline" size={18} color={colors.subtext} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={themedStyles.footer}>
+          <Text style={themedStyles.versionText}>NeuroHabit v1.0.0</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -581,5 +637,15 @@ const styles = (colors) => StyleSheet.create({
   modalDeleteText: {
     color: colors.white,
     fontWeight: "700",
+  },
+  footer: {
+    marginTop: 8,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  versionText: {
+    color: colors.subtext,
+    fontSize: 12,
+    opacity: 0.6,
   },
 });

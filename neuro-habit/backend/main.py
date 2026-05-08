@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
-from core.config import ALLOWED_ORIGINS, SENTRY_DSN
+from core.config import ALLOWED_ORIGINS, SENTRY_DSN, TRUSTED_PROXIES, HTTP_CLIENT
 from core.rate_limit import limiter
 import sentry_sdk
 import os
@@ -19,8 +19,13 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 app = FastAPI(title="Neuro Habit API")
 app.state.limiter = limiter
 
+@app.on_event("shutdown")
+def shutdown_event():
+    HTTP_CLIENT.close()
+
 # Trust X-Forwarded-For headers from reverse proxies (ALB, Nginx, etc.)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=TRUSTED_PROXIES)
+
 
 app.add_exception_handler(
     RateLimitExceeded,

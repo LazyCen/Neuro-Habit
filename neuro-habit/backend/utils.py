@@ -1,27 +1,45 @@
-import numpy as np
+import math
 from typing import List, Dict
 
 def calculate_correlations(data: List[Dict]):
     """
     data should be a list of dicts with keys like 'steps', 'mood', 'screen_time', 'habits_completed'
+    Calculates Pearson correlation coefficient without numpy.
     """
     if len(data) < 2:
         return {}
 
-    steps = [d.get('steps', 0) for d in data]
-    mood = [d.get('mood', 0) for d in data]
-    screen_time = [d.get('screen_time', 0) for d in data]
-    habits = [d.get('habits_completed', 0) for d in data]
+    keys = ['steps', 'mood', 'screen_time', 'habits_completed']
+    
+    # Extract series
+    series = {k: [float(d.get(k, 0)) for d in data] for k in keys}
+    
+    def get_stats(x):
+        n = len(x)
+        if n == 0: return 0, 0
+        mean = sum(x) / n
+        var = sum((xi - mean) ** 2 for xi in x) / n
+        std = math.sqrt(var)
+        return mean, std
+
+    def get_correlation(x, y):
+        n = len(x)
+        mu_x, std_x = get_stats(x)
+        mu_y, std_y = get_stats(y)
+        
+        if std_x == 0 or std_y == 0:
+            return 0.0
+            
+        covariance = sum((x[i] - mu_x) * (y[i] - mu_y) for i in range(n)) / n
+        return covariance / (std_x * std_y)
 
     correlations = {}
     
     # Steps vs Mood
-    if np.std(steps) > 0 and np.std(mood) > 0:
-        correlations['steps_vs_mood'] = float(np.corrcoef(steps, mood)[0, 1])
+    correlations['steps_vs_mood'] = get_correlation(series['steps'], series['mood'])
     
     # Screen Time vs Habits
-    if np.std(screen_time) > 0 and np.std(habits) > 0:
-        correlations['screen_time_vs_habits'] = float(np.corrcoef(screen_time, habits)[0, 1])
+    correlations['screen_time_vs_habits'] = get_correlation(series['screen_time'], series['habits_completed'])
 
     return correlations
 
@@ -36,6 +54,8 @@ try:
 except ImportError:
     sentry_sdk = None
 
+from core.config import OPENAI_API_KEY
+
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client as a module-level singleton
@@ -44,9 +64,8 @@ _openai_client = None
 def get_openai_client():
     global _openai_client
     if _openai_client is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if api_key:
-            _openai_client = openai.AsyncOpenAI(api_key=api_key)
+        if OPENAI_API_KEY:
+            _openai_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
     return _openai_client
 
 @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=10))

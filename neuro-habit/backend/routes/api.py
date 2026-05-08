@@ -1,6 +1,6 @@
 import asyncio
 from tenacity import retry, stop_after_attempt, wait_exponential
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, BackgroundTasks
 from typing import List
 from supabase import Client
 import datetime
@@ -11,6 +11,56 @@ from core.rate_limit import limiter, LIMIT_READ, LIMIT_WRITE, LIMIT_AI
 from services.db_service import check_supabase_response
 
 router = APIRouter()
+MAX_BULK_ITEMS = 100
+
+
+import time
+
+@router.get("/health")
+async def health_check(client: Client = Depends(get_admin_client)):
+    """
+    Enhanced health check endpoint for production monitoring.
+    Verifies connectivity and measures latency for Supabase and OpenAI.
+    """
+    metrics = {
+        "supabase_latency_ms": None,
+        "openai_latency_ms": None,
+    }
+    
+    supabase_ok = False
+    try:
+        start_time = time.perf_counter()
+        # Simple query to check Supabase connectivity
+        client.table("profiles").select("id").limit(1).execute()
+        metrics["supabase_latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
+        supabase_ok = True
+    except Exception as e:
+        print(f"Health Check: Supabase error: {str(e)}")
+
+    openai_ok = False
+    openai_client = utils.get_openai_client()
+    if openai_client:
+        try:
+            start_time = time.perf_counter()
+            # list models is a lightweight way to verify API key and connectivity
+            await openai_client.models.list()
+            metrics["openai_latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
+            openai_ok = True
+        except Exception as e:
+            print(f"Health Check: OpenAI error: {str(e)}")
+    
+    status = "ok" if supabase_ok and (openai_ok or not openai_client) else "degraded"
+    if not supabase_ok:
+        status = "error"
+        
+    return {
+        "status": status,
+        "supabase": "connected" if supabase_ok else "disconnected",
+        "openai": "connected" if openai_ok else "disconnected" if openai_client else "not configured",
+        "metrics": metrics,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+
 
 @router.get("/")
 @limiter.limit(LIMIT_READ)
@@ -63,6 +113,9 @@ async def log_mood(request: Request, log: MoodLog, user=Depends(get_current_user
 async def log_mood_bulk(request: Request, logs: List[MoodLog], user=Depends(get_current_user), client: Client = Depends(get_user_client)):
     if not logs:
         return []
+    if len(logs) > MAX_BULK_ITEMS:
+        raise HTTPException(status_code=400, detail=f"Bulk request exceeds limit of {MAX_BULK_ITEMS} items.")
+
     data = [{"user_id": user.id, "mood_score": log.mood, "note": log.note, "timestamp": log.timestamp.isoformat()} for log in logs]
     response = check_supabase_response(client.table("mood_logs").insert(data).execute())
     return response.data if response.data else {"status": "error"}
@@ -79,6 +132,9 @@ async def update_metrics(request: Request, metrics: DailyMetrics, user=Depends(g
 async def update_metrics_bulk(request: Request, metrics_list: List[DailyMetrics], user=Depends(get_current_user), client: Client = Depends(get_user_client)):
     if not metrics_list:
         return []
+    if len(metrics_list) > MAX_BULK_ITEMS:
+        raise HTTPException(status_code=400, detail=f"Bulk request exceeds limit of {MAX_BULK_ITEMS} items.")
+
     data = [{"user_id": user.id, "steps": metrics.steps, "screen_time": metrics.screen_time, "date": metrics.date.isoformat()} for metrics in metrics_list]
     response = check_supabase_response(client.table("daily_metrics").upsert(data, on_conflict="user_id,date").execute())
     return response.data if response.data else {"status": "error"}
@@ -124,59 +180,10 @@ async def delete_account(request: Request, user=Depends(get_current_user), admin
         )
 
 
-@router.post("/admin/generate-insights", include_in_schema=False)
-async def admin_generate_insights(request: Request, _: None = Depends(verify_cron_secret), admin: Client = Depends(get_admin_client)):
-    res = admin.rpc("get_all_users_insights_data").execute()
-    if not res.data:
-        return {"status": "no_data", "users_processed": 0}
+from core.celery_app import celery_app
 
-    from collections import defaultdict
-    user_data = defaultdict(list)
-    for row in res.data:
-        user_data[row["user_id"]].append({
-            "date": row["date"],
-            "steps": row["steps"],
-            "screen_time": row["screen_time"],
-            "mood": row["mood"],
-            "habits_completed": row["habits_completed"]
-        })
-
-    processed = 0
-    errors = []
-
-    async def process_user(user_id, combined_data):
-        corrs = utils.calculate_correlations(combined_data)
-        insights = await utils.generate_natural_language_insight(corrs)
-
-        if not insights:
-            return False, None
-
-        rows = [{"text": ins["text"], "type": ins["type"], "icon": ins["icon"], "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()} for ins in insights]
-        
-        def _update_db():
-            admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
-        
-        await asyncio.to_thread(_update_db)
-        return True, None
-
-    async def async_process_user(user_id, combined_data):
-        try:
-            success, err = await process_user(user_id, combined_data)
-            return user_id, success, err
-        except Exception as exc:
-            return user_id, False, str(exc)
-
-    user_ids = list(user_data.keys())
-    # Process in batches of 10 to avoid overwhelming the connection pool
-    batch_size = 10
-    for i in range(0, len(user_ids), batch_size):
-        batch = user_ids[i:i + batch_size]
-        tasks = [async_process_user(uid, user_data[uid]) for uid in batch]
-        results = await asyncio.gather(*tasks)
-        for uid, success, err in results:
-            if success:
-                processed += 1
-            if err:
-                errors.append({"user_id": uid, "error": err})
-
-    return {"status": "done", "users_processed": processed, "errors": errors}
+@router.post("/admin/generate-insights", include_in_schema=False, status_code=202)
+async def admin_generate_insights(request: Request, _: None = Depends(verify_cron_secret)):
+    # Trigger Celery task
+    task = celery_app.send_task("generate_all_user_insights")
+    return {"status": "accepted", "message": "Insight generation started in background.", "task_id": task.id}

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS ai_insights (
 -- Indexes for Performance
 CREATE INDEX IF NOT EXISTS idx_mood_logs_user_timestamp ON mood_logs (user_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_habit_logs_user_created ON habit_logs (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_habit_logs_user_id_created_at ON habit_logs (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits (user_id);
 CREATE INDEX IF NOT EXISTS idx_ai_insights_user_created ON ai_insights (user_id, created_at DESC);
 
@@ -145,7 +146,7 @@ BEGIN
 
   -- Get habits stats
   SELECT COUNT(*) INTO v_habits_total FROM habits WHERE user_id = auth.uid();
-  SELECT COUNT(DISTINCT habit_id) INTO v_habits_completed FROM habit_logs WHERE user_id = auth.uid() AND DATE(created_at) = CURRENT_DATE;
+  SELECT COUNT(DISTINCT habit_id) INTO v_habits_completed FROM habit_logs WHERE user_id = auth.uid() AND created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + INTERVAL '1 day';
 
   v_result := jsonb_build_object(
     'mood', v_mood,
@@ -231,32 +232,40 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  WITH recent_metrics AS (
-    SELECT dm.user_id, dm.date, dm.steps, dm.screen_time,
-           ROW_NUMBER() OVER (PARTITION BY dm.user_id ORDER BY dm.date DESC) as rn
-    FROM daily_metrics dm
+  WITH target_users AS (
+    SELECT DISTINCT dm.user_id FROM daily_metrics dm
   ),
-  daily_mood AS (
-    SELECT ml.user_id, DATE(ml.timestamp) as date, MAX(ml.mood_score) as mood_score
-    FROM mood_logs ml
-    GROUP BY ml.user_id, DATE(ml.timestamp)
-  ),
-  daily_habits AS (
-    SELECT hl.user_id, DATE(hl.created_at) as date, COUNT(*)::INTEGER as habits_completed
-    FROM habit_logs hl
-    GROUP BY hl.user_id, DATE(hl.created_at)
+  recent_metrics AS (
+    SELECT u.user_id, dm.date, dm.steps, dm.screen_time
+    FROM target_users u
+    CROSS JOIN LATERAL (
+      SELECT dm2.date, dm2.steps, dm2.screen_time
+      FROM daily_metrics dm2
+      WHERE dm2.user_id = u.user_id
+      ORDER BY dm2.date DESC
+      LIMIT 10
+    ) dm
   )
   SELECT 
     rm.user_id,
     TO_CHAR(rm.date, 'YYYY-MM-DD') as date,
     rm.steps,
     rm.screen_time,
-    COALESCE(dm.mood_score, 0)::INTEGER as mood,
-    COALESCE(dh.habits_completed, 0)::INTEGER as habits_completed
-  FROM recent_metrics rm
-  LEFT JOIN daily_mood dm ON rm.user_id = dm.user_id AND rm.date = dm.date
-  LEFT JOIN daily_habits dh ON rm.user_id = dh.user_id AND rm.date = dh.date
-  WHERE rm.rn <= 10;
+    COALESCE((
+      SELECT MAX(ml.mood_score)
+      FROM mood_logs ml
+      WHERE ml.user_id = rm.user_id 
+        AND ml.timestamp >= rm.date::timestamp 
+        AND ml.timestamp < (rm.date + 1)::timestamp
+    ), 0)::INTEGER as mood,
+    COALESCE((
+      SELECT COUNT(*)::INTEGER
+      FROM habit_logs hl
+      WHERE hl.user_id = rm.user_id 
+        AND hl.created_at >= rm.date::timestamp 
+        AND hl.created_at < (rm.date + 1)::timestamp
+    ), 0)::INTEGER as habits_completed
+  FROM recent_metrics rm;
 END;
 $$;
 

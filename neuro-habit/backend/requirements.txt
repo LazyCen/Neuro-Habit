@@ -4,7 +4,8 @@ pydantic
 supabase
 openai
 python-dotenv
-numpy
+celery
+redis
 slowapi
 requests
 tenacity

@@ -3,12 +3,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MMKV } from 'react-native-mmkv';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
+import * as Sentry from '@sentry/react-native';
 import { supabase } from './supabaseClient';
 
 const LOCAL_MOOD_LOGS_KEY = 'local_mood_logs_v1';
 const PENDING_MOODS_KEY = 'pending_moods_v1';
 const PENDING_METRICS_KEY = 'pending_metrics_v1';
 const CACHED_INSIGHTS_KEY = 'cached_insights_v1';
+const LOCAL_HABITS_KEY = 'local_habits_v1';
+const HABIT_META_KEY = 'habit_meta_v2';
+const DASHBOARD_CACHE_KEY = 'dashboard_data_cache_v1';
+const HIDE_SYNC_CARD_KEY = 'hideSyncCard_v2';
+const SYNC_BATCH_SIZE = 100;
 
 let timeOffsetMs = 0;
 let timeSynced = false;
@@ -49,24 +55,74 @@ async function getActiveBackendUrl() {
   if (activeBackendUrl) return activeBackendUrl;
   
   const baseUrls = getApiBaseUrls();
-  if (baseUrls.length === 0) throw new Error("No API URLs configured");
+  
+  Sentry.addBreadcrumb({
+    category: 'backend',
+    message: 'Starting backend URL selection',
+    data: { baseUrls },
+    level: 'info',
+  });
+  
+  if (baseUrls.length === 0) {
+    Sentry.addBreadcrumb({
+      category: 'backend',
+      message: 'Failed to select backend: No URLs configured',
+      level: 'error',
+    });
+    throw new Error("No API URLs configured");
+  }
+  
   if (baseUrls.length === 1) {
     activeBackendUrl = baseUrls[0];
+    Sentry.addBreadcrumb({
+      category: 'backend',
+      message: 'Single backend URL available, selecting it',
+      data: { selected: activeBackendUrl },
+      level: 'info',
+    });
     return activeBackendUrl;
   }
   
   try {
-    // Health-check ping all URLs concurrently
+    Sentry.addBreadcrumb({
+      category: 'backend',
+      message: 'Pinging multiple backend URLs',
+      data: { count: baseUrls.length },
+      level: 'info',
+    });
+
     activeBackendUrl = await Promise.any(
       baseUrls.map(async (url) => {
         const res = await fetchWithTimeout(`${url}/`, {}, 2000);
-        if (res.ok) return url;
-        throw new Error('Ping failed');
+        if (res.ok) {
+          Sentry.addBreadcrumb({
+            category: 'backend',
+            message: 'Backend ping successful',
+            data: { url },
+            level: 'info',
+          });
+          return url;
+        }
+        throw new Error(`Ping failed for ${url}`);
       })
     );
+    
+    Sentry.addBreadcrumb({
+      category: 'backend',
+      message: 'Active backend selected via ping',
+      data: { selected: activeBackendUrl },
+      level: 'info',
+    });
     return activeBackendUrl;
   } catch (e) {
-    return baseUrls[0]; // Fallback to first if all pings fail
+    activeBackendUrl = baseUrls[0];
+    Sentry.addBreadcrumb({
+      category: 'backend',
+      message: 'All backend pings failed, falling back to first URL',
+      data: { fallback: activeBackendUrl, error: e.message },
+      level: 'warning',
+    });
+    return activeBackendUrl;
   }
 }
 
@@ -292,6 +348,10 @@ async function postMetricsOnline(steps, screenTime) {
 }
 
 async function postMoodBulkOnline(moods) {
+  if (!moods || moods.length === 0) return { success: true };
+  if (moods.length > SYNC_BATCH_SIZE) {
+    throw new Error(`Bulk mood payload exceeds maximum batch size of ${SYNC_BATCH_SIZE}`);
+  }
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
@@ -324,6 +384,10 @@ async function postMoodBulkOnline(moods) {
 }
 
 async function postMetricsBulkOnline(metricsList) {
+  if (!metricsList || metricsList.length === 0) return { success: true };
+  if (metricsList.length > SYNC_BATCH_SIZE) {
+    throw new Error(`Bulk metrics payload exceeds maximum batch size of ${SYNC_BATCH_SIZE}`);
+  }
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
@@ -520,19 +584,25 @@ export const backendService = {
     };
 
     const markFailure = (item, error, type) => {
-      // 4xx errors are permanent client rejections (bad payload, auth, etc.).
-      // Retrying them is futile and blocks other items — drop immediately.
-      if (error?.isPermanent) {
+      // 400 (Bad Request) could be a payload limit error from the backend.
+      // We treat it as transient if it looks like a limit issue, allowing chunking/retries to handle it.
+      const isPayloadLimit = error?.status === 400; // Backend returns 400 for exceeds limit
+      
+      if (error?.isPermanent && !isPayloadLimit) {
         console.error(`[Telemetry] Permanent rejection (HTTP ${error.status}) for ${type} — dropping:`, error);
         return null;
       }
       const retryCount = (item.retryCount || 0) + 1;
       if (retryCount >= MAX_RETRIES) {
-        // Log to telemetry (mock Sentry)
+        // Log to telemetry
+        Sentry.captureException(error, {
+          tags: { type, service: 'sync' },
+          extra: { item }
+        });
         console.error(`[Telemetry] Permanent sync failure for ${type}:`, error);
         return null; // Drop from queue
       }
-      // Exponential backoff: 2^retryCount minutes (only for transient 5xx / network errors)
+      // Exponential backoff: 2^retryCount minutes (only for transient / network / limit errors)
       const backoffMinutes = Math.pow(2, retryCount);
       const nextRetryAt = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
       return { ...item, retryCount, nextRetryAt };
@@ -549,14 +619,23 @@ export const backendService = {
         }
         moodsToSync.push(item);
       }
+      
       if (moodsToSync.length > 0) {
-        try {
-          const payload = moodsToSync.map(m => ({ mood: m.mood, note: m.note, timestamp: m.queuedAt || new Date().toISOString() }));
-          await postMoodBulkOnline(payload);
-        } catch (e) {
-          for (const item of moodsToSync) {
-            const updatedItem = markFailure(item, e, 'mood');
-            if (updatedItem) remainingMoods.push(updatedItem);
+        const CHUNK_SIZE = SYNC_BATCH_SIZE;
+        for (let i = 0; i < moodsToSync.length; i += CHUNK_SIZE) {
+          const chunk = moodsToSync.slice(i, i + CHUNK_SIZE);
+          try {
+            const payload = chunk.map(m => ({ 
+              mood: m.mood, 
+              note: m.note, 
+              timestamp: m.queuedAt || new Date().toISOString() 
+            }));
+            await postMoodBulkOnline(payload);
+          } catch (e) {
+            for (const item of chunk) {
+              const updatedItem = markFailure(item, e, 'mood');
+              if (updatedItem) remainingMoods.push(updatedItem);
+            }
           }
         }
       }
@@ -574,18 +653,23 @@ export const backendService = {
         }
         metricsToSync.push(item);
       }
+      
       if (metricsToSync.length > 0) {
-        try {
-          const payload = metricsToSync.map(m => ({
-            steps: m.steps,
-            screen_time: m.screenTime,
-            date: new Date(m.queuedAt || Date.now()).toISOString().slice(0, 10)
-          }));
-          await postMetricsBulkOnline(payload);
-        } catch (e) {
-          for (const item of metricsToSync) {
-            const updatedItem = markFailure(item, e, 'metrics');
-            if (updatedItem) remainingMetrics.push(updatedItem);
+        const CHUNK_SIZE = SYNC_BATCH_SIZE;
+        for (let i = 0; i < metricsToSync.length; i += CHUNK_SIZE) {
+          const chunk = metricsToSync.slice(i, i + CHUNK_SIZE);
+          try {
+            const payload = chunk.map(m => ({
+              steps: m.steps,
+              screen_time: m.screenTime,
+              date: new Date(m.queuedAt || Date.now()).toISOString().slice(0, 10)
+            }));
+            await postMetricsBulkOnline(payload);
+          } catch (e) {
+            for (const item of chunk) {
+              const updatedItem = markFailure(item, e, 'metrics');
+              if (updatedItem) remainingMetrics.push(updatedItem);
+            }
           }
         }
       }
@@ -689,8 +773,15 @@ export const backendService = {
       const storage = await getEncryptedStorage();
       storage.clearAll();
       
-      // 2. Clear AsyncStorage (Insights)
-      await AsyncStorage.removeItem(CACHED_INSIGHTS_KEY);
+      // 2. Clear AsyncStorage (Insights, Habits, Dashboard Cache, UI flags)
+      const keysToClear = [
+        CACHED_INSIGHTS_KEY,
+        LOCAL_HABITS_KEY,
+        HABIT_META_KEY,
+        DASHBOARD_CACHE_KEY,
+        HIDE_SYNC_CARD_KEY
+      ];
+      await AsyncStorage.multiRemove(keysToClear);
       
       // 3. Purge the encryption key from SecureStore to ensure a fresh start
       await SecureStore.deleteItemAsync('mmkv_encryption_key');

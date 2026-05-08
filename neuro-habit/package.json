@@ -9,7 +9,10 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "optimize-assets": "npx svgo -f assets/images && npx expo-optimize ./ --quality 80"
+    "optimize-assets": "npx svgo -f assets/images && npx expo-optimize ./ --quality 80",
+    "preandroid": "npm run optimize-assets",
+    "preios": "npm run optimize-assets",
+    "build": "npm run optimize-assets && expo export"
   },
   "dependencies": {
     "@antardev/react-native-usage-stats": "^0.1.1",
@@ -18,6 +21,7 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@sentry/react-native": "~7.2.0",
     "@supabase/realtime-js": "^2.104.1",
     "@supabase/supabase-js": "^2.104.1",
     "expo": "~54.0.34",
