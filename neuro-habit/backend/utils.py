@@ -25,17 +25,33 @@ def calculate_correlations(data: List[Dict]):
 
     return correlations
 
-def generate_natural_language_insight(correlations: Dict):
+import os
+import json
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+@retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def _call_openai(client, prompt):
+    response = await client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are an insightful wellness assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=150,
+        temperature=0.7,
+        response_format={"type": "json_object"}
+    )
+    return response.choices[0].message.content
+
+async def generate_natural_language_insight(correlations: Dict):
     insights = []
     
     # Try using OpenAI if the key is available
-    import os
-    import json
     api_key = os.environ.get("OPENAI_API_KEY")
     if api_key and api_key != "your-openai-api-key-here":
         try:
             import openai
-            client = openai.OpenAI(api_key=api_key)
+            client = openai.AsyncOpenAI(api_key=api_key)
             prompt = (
                 f"Based on the following user data correlations, generate 1 to 2 personalized, "
                 f"short insights or recommendations for a habit-tracking app. "
@@ -46,18 +62,8 @@ def generate_natural_language_insight(correlations: Dict):
                 f"Correlations: {json.dumps(correlations)}"
             )
             
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an insightful wellness assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=150,
-                temperature=0.7,
-                response_format={"type": "json_object"} if hasattr(client.chat.completions, 'create') else None
-            )
+            content = await _call_openai(client, prompt)
             
-            content = response.choices[0].message.content
             # To handle cases where it returns a JSON object instead of an array
             parsed = json.loads(content)
             if isinstance(parsed, list):

@@ -50,7 +50,7 @@ async def get_insights(request: Request, user=Depends(get_current_user), client:
 
         combined_data = list(data_by_date.values())
         corrs = utils.calculate_correlations(combined_data)
-        insights = utils.generate_natural_language_insight(corrs)
+        insights = await utils.generate_natural_language_insight(corrs)
         if insights:
             return insights
 
@@ -126,20 +126,24 @@ async def admin_generate_insights(request: Request, _: None = Depends(verify_cro
     processed = 0
     errors = []
 
-    def process_user(user_id, combined_data):
+    async def process_user(user_id, combined_data):
         corrs = utils.calculate_correlations(combined_data)
-        insights = utils.generate_natural_language_insight(corrs)
+        insights = await utils.generate_natural_language_insight(corrs)
 
         if not insights:
             return False, None
 
         rows = [{"text": ins["text"], "type": ins["type"], "icon": ins["icon"], "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()} for ins in insights]
-        admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
+        
+        def _update_db():
+            admin.rpc("replace_user_insights", {"p_user_id": str(user_id), "p_insights": rows}).execute()
+        
+        await asyncio.to_thread(_update_db)
         return True, None
 
     async def async_process_user(user_id, combined_data):
         try:
-            success, err = await asyncio.to_thread(process_user, user_id, combined_data)
+            success, err = await process_user(user_id, combined_data)
             return user_id, success, err
         except Exception as exc:
             return user_id, False, str(exc)
