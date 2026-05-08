@@ -158,6 +158,10 @@ AS $$
 DECLARE
   insight RECORD;
 BEGIN
+  IF auth.uid() IS NOT NULL AND auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
   -- Delete old insights
   DELETE FROM ai_insights WHERE user_id = p_user_id;
 
@@ -183,6 +187,10 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
+  IF auth.uid() IS NOT NULL AND auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
   -- Delete from all associated tables in a single transaction
   DELETE FROM public.habit_logs WHERE user_id = p_user_id;
   DELETE FROM public.mood_logs WHERE user_id = p_user_id;
@@ -207,6 +215,10 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    RAISE EXCEPTION 'Unauthorized: Admins only';
+  END IF;
+
   RETURN QUERY
   WITH recent_metrics AS (
     SELECT dm.user_id, dm.date, dm.steps, dm.screen_time,
@@ -250,6 +262,10 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
+  IF auth.uid() IS NOT NULL AND auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
   RETURN QUERY
   WITH recent_metrics AS (
     SELECT dm.date, dm.steps, dm.screen_time
