@@ -49,7 +49,7 @@ export const AuthProvider = ({ children }) => {
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      console.log('AuthContext: Auth state changed event:', _event, 'Session user:', session?.user?.email);
+      console.log('AuthContext: Auth state changed event:', _event);
       
       if (session?.user?.user_metadata?.account_delete_requested) {
         console.warn('AuthContext: Detected account in deletion state. Forcing sign out.');
@@ -67,7 +67,7 @@ export const AuthProvider = ({ children }) => {
       if (_event === 'USER_UPDATED' && session?.user?.id) {
         supabase.auth.getSession().then(({ data: { session: freshSession } }) => {
           if (freshSession) {
-            console.log('AuthContext: Refreshed session after user update:', freshSession.user?.user_metadata);
+            console.log('AuthContext: Refreshed session after user update');
             setSession(freshSession);
           }
         });
@@ -80,7 +80,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const signIn = async (email, password) => {
-    console.log('AuthContext: Attempting signIn for', email);
+    console.log('AuthContext: Attempting signIn');
     try {
       // Add a timeout to avoid hanging indefinitely
       const timeoutPromise = new Promise((_, reject) => 
@@ -111,7 +111,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signUp = async (email, password, metadata = {}) => {
-    console.log('AuthContext: Attempting signUp for', email);
+    console.log('AuthContext: Attempting signUp');
     try {
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
@@ -134,15 +134,8 @@ export const AuthProvider = ({ children }) => {
     setSession(null);
   };
 
-  const bypassAuth = () => {
-    setSession({
-      user: { email: 'guest@example.com', id: 'guest-id' },
-      access_token: 'dummy-token'
-    });
-  };
-
   return (
-    <AuthContext.Provider value={{ session, loading, signIn, signUp, signOut, bypassAuth }}>
+    <AuthContext.Provider value={{ session, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );
