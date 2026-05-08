@@ -10,6 +10,15 @@ import Card from "../components/Card";
 import PremiumBackground from "../components/PremiumBackground";
 import { fetchWeeklyStepTrend } from "../services/api";
 
+// Lazy load heavy chart library to optimize initial bundle size
+const AdvancedChart = React.lazy(() => import("../components/AdvancedChart"));
+
+const ChartFallback = () => (
+  <View style={{ height: 220, justifyContent: 'center', alignItems: 'center' }}>
+    <ActivityIndicator size="small" color="#999" />
+  </View>
+);
+
 export default function InsightsScreen() {
   const { theme: colors } = useTheme();
   const { insights, data, loading, isOfflineMode } = useDashboard();
@@ -63,26 +72,12 @@ export default function InsightsScreen() {
             <Animated.View entering={FadeInUp.delay(400)}>
               <Text style={themedStyles.sectionTitle}>Activity Trend (Steps)</Text>
               <Card style={themedStyles.chartCard}>
-                <View style={themedStyles.chartContainer}>
-                  {(trend.length > 0 ? trend : [{ day: "Today", steps: data?.steps || 0 }]).map((item, index, array) => {
-                    const maxSteps = Math.max(...array.map((d) => d.steps || 0), 1000);
-                    const heightPercent = Math.max(10, Math.min(100, (item.steps / maxSteps) * 100));
-                    return (
-                      <View key={index} style={themedStyles.barWrapper}>
-                        <View style={themedStyles.barBackground}>
-                          <Animated.View 
-                            entering={FadeInUp.delay(500 + (index * 100)).duration(800)}
-                            style={[
-                              themedStyles.barFill, 
-                              { height: `${heightPercent}%`, backgroundColor: colors.primary }
-                            ]} 
-                          />
-                        </View>
-                        <Text style={themedStyles.barLabel}>{item.day}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
+                <React.Suspense fallback={<ChartFallback />}>
+                  <AdvancedChart 
+                    data={trend.length > 0 ? trend : [{ day: "Today", steps: data?.steps || 0 }]} 
+                    colors={colors}
+                  />
+                </React.Suspense>
               </Card>
             </Animated.View>
 

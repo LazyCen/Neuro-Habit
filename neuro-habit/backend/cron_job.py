@@ -14,7 +14,7 @@ def run_insights_generation():
     Triggers the background insight generation process.
     This simulates a cron job hitting the secure /admin endpoint.
     """
-    if not CRON_SECRET or CRON_SECRET == "your-cron-secret-here":
+    if not CRON_SECRET:
         print("Error: CRON_SECRET is not configured properly.")
         return
 

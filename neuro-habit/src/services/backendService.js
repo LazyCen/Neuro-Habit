@@ -334,28 +334,17 @@ async function createHabitViaSupabase(name) {
     throw new Error('No authenticated user for habit creation');
   }
 
-  const payloadVariants = [
-    { user_id: userId, name: trimmedValue },
-    { user_id: userId, title: trimmedValue },
-  ];
+  const { data, error } = await supabase
+    .from('habits')
+    .insert([{ user_id: userId, name: trimmedValue }])
+    .select()
+    .single();
 
-  let lastError = null;
-
-  for (const payload of payloadVariants) {
-    const { data, error } = await supabase
-      .from('habits')
-      .insert([payload])
-      .select()
-      .single();
-
-    if (!error) {
-      return { success: true, via: 'supabase', data };
-    }
-
-    lastError = error;
+  if (error) {
+    throw error;
   }
 
-  throw lastError || new Error('Unable to insert habit');
+  return { success: true, via: 'supabase', data };
 }
 
 export const backendService = {
@@ -563,5 +552,24 @@ export const backendService = {
         'Authorization': `Bearer ${token}`
       }
     });
+  },
+
+  async purgeAllLocalData() {
+    try {
+      // 1. Clear encrypted MMKV instance (Moods, Metrics, etc.)
+      const storage = await getEncryptedStorage();
+      storage.clearAll();
+      
+      // 2. Clear AsyncStorage (Insights)
+      await AsyncStorage.removeItem(CACHED_INSIGHTS_KEY);
+      
+      // 3. Purge the encryption key from SecureStore to ensure a fresh start
+      await SecureStore.deleteItemAsync('mmkv_encryption_key');
+      encryptedStorage = null;
+      
+      console.log('[backendService] Local user data purged successfully');
+    } catch (e) {
+      console.error('[backendService] Failed to purge local data:', e);
+    }
   }
 };

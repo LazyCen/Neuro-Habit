@@ -8,3 +8,4 @@ numpy
 slowapi
 requests
 tenacity
+sentry-sdk

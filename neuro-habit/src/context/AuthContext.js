@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { Alert } from 'react-native';
 import { supabase } from '../services/supabaseClient';
+import { backendService } from '../services/backendService';
 
 const AuthContext = createContext();
 
@@ -20,9 +21,8 @@ export const AuthProvider = ({ children }) => {
         if (error) console.error('AuthContext: Error getting session:', error);
         
         if (session?.user?.user_metadata?.account_delete_requested) {
-          console.warn('AuthContext: Initial session detected as deleted. Clearing.');
-          await supabase.auth.signOut();
-          setSession(null);
+          console.warn('AuthContext: Initial session detected as deleted. Purging local data.');
+          await signOut(true);
         } else {
           console.log('AuthContext: Initial session:', session ? 'Found' : 'Not found');
           setSession(session);
@@ -52,9 +52,8 @@ export const AuthProvider = ({ children }) => {
       console.log('AuthContext: Auth state changed event:', _event);
       
       if (session?.user?.user_metadata?.account_delete_requested) {
-        console.warn('AuthContext: Detected account in deletion state. Forcing sign out.');
-        await supabase.auth.signOut();
-        setSession(null);
+        console.warn('AuthContext: Detected account in deletion state. Purging local data.');
+        await signOut(true);
         setLoading(false);
         return;
       }
@@ -129,7 +128,10 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signOut = async () => {
+  const signOut = async (shouldPurge = false) => {
+    if (shouldPurge) {
+      await backendService.purgeAllLocalData();
+    }
     await supabase.auth.signOut();
     setSession(null);
   };

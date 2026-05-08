@@ -27,7 +27,15 @@ def calculate_correlations(data: List[Dict]):
 
 import os
 import json
+import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
+
+logger = logging.getLogger(__name__)
 
 @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def _call_openai(client, prompt):
@@ -48,7 +56,7 @@ async def generate_natural_language_insight(correlations: Dict):
     
     # Try using OpenAI if the key is available
     api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key and api_key != "your-openai-api-key-here":
+    if api_key:
         try:
             import openai
             client = openai.AsyncOpenAI(api_key=api_key)
@@ -73,7 +81,9 @@ async def generate_natural_language_insight(correlations: Dict):
             elif isinstance(parsed, dict):
                 return [parsed]
         except Exception as e:
-            print(f"OpenAI generation failed: {e}")
+            logger.error(f"OpenAI insight generation failed: {e}", exc_info=True)
+            if sentry_sdk:
+                sentry_sdk.capture_exception(e)
             # Fallback to rule-based logic
             pass
             

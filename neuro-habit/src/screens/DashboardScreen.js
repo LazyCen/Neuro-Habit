@@ -3,7 +3,7 @@ import { ScrollView, Text, View, StyleSheet, ActivityIndicator, TouchableOpacity
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeInDown, FadeInUp, FadeOut } from "react-native-reanimated";
+import Animated, { FadeInDown, FadeInUp, FadeOut, useSharedValue, useAnimatedStyle, withTiming, withDelay } from "react-native-reanimated";
 import Card from "../components/Card";
 import HealthPermissionModal from "../components/HealthPermissionModal";
 import useDashboard from "../hooks/useDashboard";
@@ -27,26 +27,33 @@ export default function DashboardScreen() {
     hasAnyProvider: true,
   });
   const [dismissedSync, setDismissedSync] = React.useState(false);
-  const [showUpdatingBadge, setShowUpdatingBadge] = React.useState(false);
+  const badgeOpacity = useSharedValue(0);
+  const badgeTranslateY = useSharedValue(-4);
   const [permissionLoading, setPermissionLoading] = React.useState(false);
   const [usernameLoading, setUsernameLoading] = React.useState(false);
   const [showHealthModal, setShowHealthModal] = React.useState(false);
   const [permissionTypeToRequest, setPermissionTypeToRequest] = React.useState(null);
 
   React.useEffect(() => {
-    let hideTimer;
     if (isRefreshingData) {
-      setShowUpdatingBadge(true);
-    } else if (showUpdatingBadge) {
-      hideTimer = setTimeout(() => {
-        setShowUpdatingBadge(false);
-      }, 650);
+      badgeOpacity.value = withTiming(1, { duration: 200 });
+      badgeTranslateY.value = withTiming(0, { duration: 200 });
+    } else {
+      // Keep it visible for a bit longer to prevent flicker on fast loads
+      badgeOpacity.value = withDelay(800, withTiming(0, { duration: 400 }));
+      badgeTranslateY.value = withDelay(800, withTiming(-4, { duration: 400 }));
     }
+  }, [isRefreshingData]);
 
-    return () => {
-      if (hideTimer) clearTimeout(hideTimer);
+  const animatedBadgeStyle = useAnimatedStyle(() => {
+    return {
+      opacity: badgeOpacity.value,
+      height: badgeOpacity.value * 24, // Smoothly expand/collapse
+      marginTop: badgeOpacity.value * 8,
+      overflow: 'hidden',
+      transform: [{ translateY: badgeTranslateY.value }],
     };
-  }, [isRefreshingData, showUpdatingBadge]);
+  });
 
   React.useEffect(() => {
     console.log('DashboardScreen: Mounted successfully');
@@ -171,16 +178,14 @@ export default function DashboardScreen() {
           <View>
             <Text style={themedStyles.greeting}>{getGreeting()},</Text>
             <Text style={themedStyles.title}>{capitalizedName} 👋</Text>
-            {showUpdatingBadge && !loading ? (
+            {!loading && (
               <Animated.View
-                entering={FadeInUp.duration(180)}
-                exiting={FadeOut.duration(220)}
-                style={themedStyles.updatingBadge}
+                style={[themedStyles.updatingBadge, animatedBadgeStyle]}
               >
                 <Ionicons name="sync-outline" size={12} color={colors.primary} />
                 <Text style={themedStyles.updatingText}>Updating...</Text>
               </Animated.View>
-            ) : null}
+            )}
           </View>
           <View style={themedStyles.avatarPlaceholder}>
             <Text style={themedStyles.avatarEmoji}>{avatarEmoji}</Text>

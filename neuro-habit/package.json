@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "optimize-assets": "npx svgo -f assets/images && npx expo-optimize ./ --quality 80"
   },
   "dependencies": {
     "@antardev/react-native-usage-stats": "^0.1.1",
@@ -62,6 +63,7 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "eslint-plugin-react-native": "^5.0.0",
+    "svgo": "^3.3.2",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -236,3 +236,49 @@ BEGIN
   WHERE rm.rn <= 10;
 END;
 $$;
+
+-- Single-User Insights Data RPC (Optimized version of the above)
+CREATE OR REPLACE FUNCTION get_user_insights_data(p_user_id UUID)
+RETURNS TABLE (
+  date TEXT,
+  steps INTEGER,
+  screen_time FLOAT,
+  mood INTEGER,
+  habits_completed INTEGER
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH recent_metrics AS (
+    SELECT dm.date, dm.steps, dm.screen_time
+    FROM daily_metrics dm
+    WHERE dm.user_id = p_user_id
+    ORDER BY dm.date DESC
+    LIMIT 10
+  ),
+  daily_mood AS (
+    SELECT DATE(ml.timestamp) as date, MAX(ml.mood_score) as mood_score
+    FROM mood_logs ml
+    WHERE ml.user_id = p_user_id
+    GROUP BY DATE(ml.timestamp)
+  ),
+  daily_habits AS (
+    SELECT DATE(hl.created_at) as date, COUNT(*)::INTEGER as habits_completed
+    FROM habit_logs hl
+    WHERE hl.user_id = p_user_id
+    GROUP BY DATE(hl.created_at)
+  )
+  SELECT 
+    TO_CHAR(rm.date, 'YYYY-MM-DD') as date,
+    rm.steps,
+    rm.screen_time,
+    COALESCE(dm.mood_score, 0)::INTEGER as mood,
+    COALESCE(dh.habits_completed, 0)::INTEGER as habits_completed
+  FROM recent_metrics rm
+  LEFT JOIN daily_mood dm ON rm.date = dm.date
+  LEFT JOIN daily_habits dh ON rm.date = dh.date
+  ORDER BY rm.date DESC;
+END;
+$$;

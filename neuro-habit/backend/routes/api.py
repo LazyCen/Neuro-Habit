@@ -31,24 +31,11 @@ async def get_insights(request: Request, user=Depends(get_current_user), client:
     if response.data:
         return [Insight(**d) for d in response.data]
 
-    metrics_res = check_supabase_response(
-        client.table("daily_metrics").select("*").eq("user_id", user_id).order("date", desc=True).limit(10).execute()
+    insights_res = check_supabase_response(
+        client.rpc("get_user_insights_data", {"p_user_id": str(user_id)}).execute()
     )
-    if metrics_res.data:
-        data_by_date = {d["date"]: d for d in metrics_res.data}
-        mood_res = check_supabase_response(client.table("mood_logs").select("timestamp, mood_score").eq("user_id", user_id).execute())
-        for m in mood_res.data or []:
-            date = m["timestamp"].split("T")[0]
-            if date in data_by_date:
-                data_by_date[date]["mood"] = m["mood_score"]
-
-        habits_res = check_supabase_response(client.table("habit_logs").select("created_at").eq("user_id", user_id).execute())
-        for h in habits_res.data or []:
-            date = h["created_at"].split("T")[0]
-            if date in data_by_date:
-                data_by_date[date]["habits_completed"] = data_by_date[date].get("habits_completed", 0) + 1
-
-        combined_data = list(data_by_date.values())
+    if insights_res.data:
+        combined_data = insights_res.data
         corrs = utils.calculate_correlations(combined_data)
         insights = await utils.generate_natural_language_insight(corrs)
         if insights:

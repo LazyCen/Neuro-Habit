@@ -27,7 +27,7 @@ def get_user_client(credentials: HTTPAuthorizationCredentials = Security(_bearer
 
 def verify_cron_secret(request: Request) -> None:
     provided = request.headers.get("X-Cron-Secret", "")
-    if not CRON_SECRET or CRON_SECRET == "your-cron-secret-here":
+    if not CRON_SECRET:
         raise HTTPException(status_code=503, detail="Admin endpoints are disabled.")
     if provided != CRON_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden: invalid cron secret.")

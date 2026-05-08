@@ -14,14 +14,14 @@ export const habitsService = {
     return data;
   },
 
-  async addHabit(title, description = '') {
+  async addHabit(name) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('No user logged in');
 
     const { data, error } = await supabase
       .from('habits')
       .insert([
-        { user_id: session.user.id, title, description }
+        { user_id: session.user.id, name }
       ])
       .select();
 
