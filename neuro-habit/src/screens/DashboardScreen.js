@@ -31,6 +31,7 @@ export default function DashboardScreen() {
   const [permissionLoading, setPermissionLoading] = React.useState(false);
   const [usernameLoading, setUsernameLoading] = React.useState(false);
   const [showHealthModal, setShowHealthModal] = React.useState(false);
+  const [permissionTypeToRequest, setPermissionTypeToRequest] = React.useState(null);
 
   React.useEffect(() => {
     let hideTimer;
@@ -70,17 +71,19 @@ export default function DashboardScreen() {
     setStepProviderStatus(stepProviders);
   };
 
-  const handleConnectUsage = async () => {
+  const handleConnect = async (type) => {
     setPermissionLoading(true);
     try {
-      await usageService.requestPermission();
-      const stepPermission = await usageService.requestStepPermissions();
-      
-      if (!stepPermission.granted && !stepPermission.hasAnyProvider) {
-        await Linking.openURL(
-          "https://play.google.com/store/search?q=Health%20Connect%20Google%20Fit&c=apps"
-        ).catch(() => {});
-        await usageService.requestPedometerPermission();
+      if (type === 'usage') {
+        await usageService.requestPermission();
+      } else if (type === 'health') {
+        const stepPermission = await usageService.requestStepPermissions();
+        if (!stepPermission.granted && !stepPermission.hasAnyProvider) {
+          await Linking.openURL(
+            "https://play.google.com/store/search?q=Health%20Connect%20Google%20Fit&c=apps"
+          ).catch(() => {});
+          await usageService.requestPedometerPermission();
+        }
       }
       
       // Re-check permissions after requesting
@@ -136,6 +139,9 @@ export default function DashboardScreen() {
       <View style={themedStyles.loadingContainer}>
         <PremiumBackground />
         <Text style={themedStyles.loadingText}>Failed to load data.</Text>
+        <TouchableOpacity style={[themedStyles.syncButton, { marginTop: 16 }]} onPress={refresh}>
+          <Text style={themedStyles.syncButtonText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -245,8 +251,8 @@ export default function DashboardScreen() {
                 <View style={themedStyles.syncButtons}>
                   {!hasUsagePerm && (
                     <TouchableOpacity 
-                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }]} 
-                      onPress={() => setShowHealthModal(true)}
+                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { marginRight: 8 }]} 
+                      onPress={() => { setPermissionTypeToRequest('usage'); setShowHealthModal(true); }}
                       disabled={permissionLoading}
                     >
                       {permissionLoading ? (
@@ -258,8 +264,8 @@ export default function DashboardScreen() {
                   )}
                   {!hasPedometerPerm && (
                     <TouchableOpacity 
-                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }]} 
-                      onPress={() => setShowHealthModal(true)}
+                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { marginRight: 8 }]} 
+                      onPress={() => { setPermissionTypeToRequest('health'); setShowHealthModal(true); }}
                       disabled={permissionLoading}
                     >
                       {permissionLoading ? (
@@ -271,8 +277,8 @@ export default function DashboardScreen() {
                   )}
                   {!stepProviderStatus.hasAnyProvider && (
                     <TouchableOpacity 
-                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }]} 
-                      onPress={() => setShowHealthModal(true)}
+                      style={[themedStyles.syncButton, permissionLoading && { opacity: 0.6 }, { marginRight: 8 }]} 
+                      onPress={() => { setPermissionTypeToRequest('health'); setShowHealthModal(true); }}
                       disabled={permissionLoading}
                     >
                       {permissionLoading ? (
@@ -337,7 +343,7 @@ export default function DashboardScreen() {
         visible={showHealthModal} 
         onConfirm={() => {
           setShowHealthModal(false);
-          handleConnectUsage();
+          handleConnect(permissionTypeToRequest);
         }} 
         onCancel={() => setShowHealthModal(false)}
         loading={permissionLoading}
