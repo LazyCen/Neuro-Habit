@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, { FadeInDown, FadeInUp, FadeOutUp, ZoomIn, BounceInDown } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from 'expo-haptics';
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { backendService } from "../services/backendService";
 import { useTheme } from "../context/ThemeContext";
@@ -50,25 +50,16 @@ export default function MoodScreen() {
     }, 3500);
   };
 
-  const playSuccessSound = async () => {
+  const playSuccessSound = () => {
     try {
-      // Try to use notification sounds - these are system sounds
-      const soundObject = new Audio.Sound();
-      // Attempt to load a system sound or from assets
-      try {
-        await soundObject.loadAsync({
-          uri: 'asset:/sounds/success.mp3',
-        });
-      } catch (e) {
-        // If sound file not found, try using device speaker with haptics
-        return;
+      // Use createAudioPlayer for imperative playback which is safer to try-catch
+      const player = createAudioPlayer('asset:/sounds/success.mp3');
+      if (player) {
+        player.play();
       }
-      await soundObject.playAsync().catch(() => {});
-      // Clean up after playback
-      setTimeout(() => soundObject.unloadAsync(), 1000);
     } catch (error) {
-      // Silently fail - haptics still work
-      console.log('Audio not available, haptics only');
+      // Silently fail - occurs if native module is missing (Expo Go) or asset is not found
+      console.log('[MoodScreen] Audio playback skipped: Native module or asset not available');
     }
   };
 

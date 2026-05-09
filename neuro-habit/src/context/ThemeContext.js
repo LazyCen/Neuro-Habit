@@ -1,24 +1,50 @@
-import React, { createContext, useState, useContext, useCallback, useMemo } from 'react';
+import React, { createContext, useState, useContext, useCallback, useMemo, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { darkColors, lightColors } from '../theme/colors';
 
+const THEME_STORAGE_KEY = 'user_theme_preference';
 const ThemeContext = createContext();
 
 export const ThemeProvider = ({ children }) => {
-  const [isDark, setIsDark] = useState(false); // Default to light theme
+  const [isDark, setIsDark] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Stable reference — does not change between renders
-  const toggleTheme = useCallback(() => {
-    setIsDark((prev) => !prev);
+  // Load theme preference on mount
+  useEffect(() => {
+    const loadTheme = async () => {
+      try {
+        const savedTheme = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+        if (savedTheme !== null) {
+          setIsDark(savedTheme === 'dark');
+        }
+      } catch (error) {
+        console.error('Failed to load theme preference:', error);
+      } finally {
+        setIsLoaded(true);
+      }
+    };
+    loadTheme();
   }, []);
 
-  // Memoized value — new object reference only when isDark changes
+  // Save theme preference when it changes
+  const toggleTheme = useCallback(async () => {
+    setIsDark((prev) => {
+      const newVal = !prev;
+      AsyncStorage.setItem(THEME_STORAGE_KEY, newVal ? 'dark' : 'light').catch(err => 
+        console.error('Failed to save theme preference:', err)
+      );
+      return newVal;
+    });
+  }, []);
+
   const value = useMemo(
     () => ({
       isDark,
       toggleTheme,
       theme: isDark ? darkColors : lightColors,
+      isLoaded,
     }),
-    [isDark, toggleTheme]
+    [isDark, toggleTheme, isLoaded]
   );
 
   return (
@@ -35,3 +61,4 @@ export const useTheme = () => {
   }
   return context;
 };
+

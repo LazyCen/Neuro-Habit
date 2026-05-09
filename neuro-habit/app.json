@@ -24,11 +24,13 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
+        "android.permission.INTERNET",
         "android.permission.PACKAGE_USAGE_STATS",
         "android.permission.ACTIVITY_RECOGNITION",
         "android.permission.health.READ_STEPS",
         "android.permission.health.WRITE_STEPS"
       ],
+
       "package": "com.neurohabit.app",
       "queries": [
         {
@@ -68,7 +70,8 @@
       "expo-web-browser",
       "expo-secure-store",
       "@sentry/react-native",
-      "react-native-health-connect"
+      "react-native-health-connect",
+      "expo-audio"
     ],
     "experiments": {
       "reactCompiler": true

@@ -25,7 +25,7 @@
     "@supabase/realtime-js": "^2.104.1",
     "@supabase/supabase-js": "^2.104.1",
     "expo": "~54.0.34",
-    "expo-av": "~16.0.8",
+    "expo-audio": "~1.1.1",
     "expo-background-fetch": "~14.0.9",
     "expo-build-properties": "~1.0.10",
     "expo-constants": "~18.0.13",

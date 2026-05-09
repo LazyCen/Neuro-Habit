@@ -10,12 +10,13 @@ import Animated, {
   interpolate
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useTheme } from '../context/ThemeContext';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
 
 export default function Preloader() {
+  const { theme, isDark } = useTheme();
   const pulse = useSharedValue(1);
   const rotation = useSharedValue(0);
   const opacity = useSharedValue(0);
@@ -72,21 +73,19 @@ export default function Preloader() {
     opacity: opacity.value,
   }));
 
-
-
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Premium Background */}
       <Animated.View style={[StyleSheet.absoluteFill, animatedBackgroundStyle]}>
         <Svg height={height} width={width}>
           <Defs>
             <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <Stop offset="0%" stopColor={colors.background} stopOpacity="1" />
-              <Stop offset="100%" stopColor={colors.black} stopOpacity="1" />
+              <Stop offset="0%" stopColor={theme.background} stopOpacity="1" />
+              <Stop offset="100%" stopColor={isDark ? theme.black : theme.white} stopOpacity="1" />
             </LinearGradient>
             <LinearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <Stop offset="0%" stopColor={colors.primary} stopOpacity="0.15" />
-              <Stop offset="100%" stopColor={colors.secondary} stopOpacity="0.05" />
+              <Stop offset="0%" stopColor={theme.primary} stopOpacity={isDark ? "0.15" : "0.08"} />
+              <Stop offset="100%" stopColor={theme.secondary} stopOpacity={isDark ? "0.05" : "0.03"} />
             </LinearGradient>
           </Defs>
           <Circle cx={width / 2} cy={height / 2} r={width * 0.8} fill="url(#bgGrad)" />
@@ -98,19 +97,24 @@ export default function Preloader() {
       <View style={styles.content}>
         {/* Logo Section */}
         <Animated.View style={[styles.logoContainer, animatedLogoStyle]}>
-          <Animated.View style={[styles.glow, animatedGlowSecondaryStyle, { backgroundColor: colors.secondary }]} />
-          <Animated.View style={[styles.glow, animatedGlowStyle]} />
-          <View style={styles.iconCircle}>
-            <Ionicons name="pulse" size={60} color={colors.primary} />
+          <Animated.View style={[styles.glow, animatedGlowSecondaryStyle, { backgroundColor: theme.secondary }]} />
+          <Animated.View style={[styles.glow, animatedGlowStyle, { backgroundColor: theme.primary }]} />
+          <View style={[styles.iconCircle, { 
+            backgroundColor: theme.primary + '1A', 
+            borderColor: theme.primary + '4D',
+            shadowColor: theme.primary 
+          }]}>
+            <Ionicons name="pulse" size={60} color={theme.primary} />
           </View>
         </Animated.View>
 
         {/* Text Section */}
         <Animated.View style={{ opacity: opacity.value, alignItems: 'center', marginTop: 40 }}>
-          <Text style={styles.title}>Neuro Habit</Text>
+          <Text style={[styles.title, { 
+            color: theme.text,
+            textShadowColor: theme.primary + (isDark ? '80' : '33')
+          }]}>Neuro Habit</Text>
         </Animated.View>
-
-
       </View>
     </View>
   );
@@ -119,7 +123,6 @@ export default function Preloader() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -137,12 +140,9 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: colors.primary + '1A',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: colors.primary + '4D',
-    shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 20,
@@ -153,24 +153,20 @@ const styles = StyleSheet.create({
     width: 160,
     height: 160,
     borderRadius: 80,
-    backgroundColor: colors.primary,
     opacity: 0.1,
   },
   title: {
     fontSize: 28,
     fontWeight: '900',
-    color: colors.white,
     letterSpacing: 4,
     marginBottom: 8,
-    textShadowColor: colors.primary + '80',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 10,
   },
   subtitle: {
     fontSize: 14,
-    color: colors.subtext,
     letterSpacing: 1.5,
     fontWeight: '500',
   },
-
 });
+

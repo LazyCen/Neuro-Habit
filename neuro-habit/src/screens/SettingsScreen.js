@@ -334,7 +334,7 @@ export default function SettingsScreen() {
           <Text style={themedStyles.sectionTitle}>Legal</Text>
           <TouchableOpacity 
             style={themedStyles.settingRow} 
-            onPress={() => Linking.openURL('https://neurohabit.app/privacy')}
+            onPress={() => Linking.openURL('https://gistcdn.githack.com/LazyCen/599170fb011c4d75857edf30e3ec16d2/raw/020bcaad985fbcbd590a19290d92e69af1a483fe/.md')}
           >
             <View style={themedStyles.settingLeft}>
               <View style={[themedStyles.iconBox, { backgroundColor: colors.secondary + '33' }]}>

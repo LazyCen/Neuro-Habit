@@ -408,14 +408,13 @@ export default function AuthScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        <Animated.View 
-          entering={FadeInUp.delay(800)}
-          style={themedStyles.legalFooter}
-        >
-          <Text style={themedStyles.legalText}>By continuing, you agree to our </Text>
-          <TouchableOpacity onPress={() => Linking.openURL('https://neurohabit.app/privacy')}>
-            <Text style={themedStyles.legalLink}>Privacy Policy</Text>
-          </TouchableOpacity>
+        <Animated.View entering={FadeInUp.delay(800)}>
+          <View style={themedStyles.legalFooter}>
+            <Text style={themedStyles.legalText}>By continuing, you agree to our </Text>
+            <TouchableOpacity onPress={() => Linking.openURL('https://gistcdn.githack.com/LazyCen/599170fb011c4d75857edf30e3ec16d2/raw/020bcaad985fbcbd590a19290d92e69af1a483fe/.md')}>
+              <Text style={themedStyles.legalLink}>Privacy Policy</Text>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
       </View>
     </KeyboardAwareScrollView>

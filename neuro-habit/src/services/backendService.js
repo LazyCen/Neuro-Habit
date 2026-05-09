@@ -180,6 +180,12 @@ let encryptedStorage = null;
 
 async function getEncryptedStorage() {
   if (encryptedStorage) return encryptedStorage;
+
+  // Check if MMKV is available in the current environment (e.g. not in Expo Go or Web)
+  if (typeof MMKV === 'undefined' || typeof MMKV !== 'function') {
+    throw new Error('MMKV_NOT_AVAILABLE');
+  }
+
   try {
     let key = await SecureStore.getItemAsync('mmkv_encryption_key');
     if (!key) {
@@ -192,14 +198,10 @@ async function getEncryptedStorage() {
           .join('');
         await SecureStore.setItemAsync('mmkv_encryption_key', key);
       } catch (cryptoError) {
-        console.warn('Crypto key generation failed, falling back to unencrypted storage:', cryptoError);
+        console.warn('[backendService] Crypto key generation failed, falling back to unencrypted storage:', cryptoError);
         encryptedStorage = new MMKV({ id: 'secure-offline-data' });
         return encryptedStorage;
       }
-    }
-
-    if (typeof MMKV !== 'function') {
-      throw new Error('MMKV undefined');
     }
 
     encryptedStorage = new MMKV({
@@ -208,12 +210,13 @@ async function getEncryptedStorage() {
     });
     return encryptedStorage;
   } catch (e) {
-    // Final fallback to unencrypted storage if MMKV exists
-    if (typeof MMKV === 'function') {
-        encryptedStorage = new MMKV({ id: 'secure-offline-data' });
-        return encryptedStorage;
+    // Final fallback to unencrypted storage if MMKV exists but encryption failed
+    try {
+      encryptedStorage = new MMKV({ id: 'secure-offline-data' });
+      return encryptedStorage;
+    } catch (fallbackError) {
+      throw e; // Throw original error if even unencrypted MMKV fails
     }
-    throw e;
   }
 }
 
@@ -893,7 +896,11 @@ export const backendService = {
         const storage = await getEncryptedStorage();
         storage.clearAll();
       } catch (mmkvError) {
-        console.warn('[backendService] Could not clear MMKV storage, may be using fallback:', mmkvError);
+        if (mmkvError.message === 'MMKV_NOT_AVAILABLE') {
+          console.log('[backendService] MMKV storage not available in this environment, skipping clear.');
+        } else {
+          console.warn('[backendService] Could not clear MMKV storage, may be using fallback:', mmkvError);
+        }
       }
       
       // 2. Clear AsyncStorage (Insights, Habits, Dashboard Cache, UI flags, and MMKV fallbacks)

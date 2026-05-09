@@ -32,19 +32,60 @@ export const AuthProvider = ({ children }) => {
 
     }, 500);
 
-    // Test connection
-    supabase.from('habits').select('count', { count: 'exact', head: true })
-      .then(({ error }) => {
+    // Test connection with deep diagnostics
+    const testConnection = async (retries = 3, delay = 2000) => {
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      
+      console.log('AuthContext: [Diagnostic] System Time:', new Date().toISOString());
+      console.log('AuthContext: [Diagnostic] Config:', { 
+        url: supabaseUrl ? 'Set' : 'Missing',
+        key: supabaseKey ? 'Set' : 'Missing' 
+      });
+
+      // 1. Check general internet connectivity first
+      try {
+        const netCheck = await fetch('https://8.8.8.8', { method: 'HEAD' }).catch(() => null);
+        if (!netCheck) {
+          console.warn('AuthContext: [Diagnostic] General internet check failed (8.8.8.8). Device may be offline or network is restricted.');
+        } else {
+          console.log('AuthContext: [Diagnostic] General internet check successful.');
+        }
+      } catch (e) {
+        console.warn('AuthContext: [Diagnostic] General internet check threw error:', e.message);
+      }
+
+      if (!supabaseUrl || !supabaseKey) {
+        console.error('AuthContext: Supabase environment variables are missing!');
+        return;
+      }
+
+      try {
+        const { error } = await supabase.from('habits').select('count', { count: 'exact', head: true });
+        
         if (error) {
           console.error('AuthContext: Supabase connection test failed:', error.message);
-          // Only alert if it's a network error, not an auth error
-          if (error.message.includes('Fetch') || error.message.includes('network')) {
-            Alert.alert('Connection Error', 'Cannot reach Supabase. Please check your internet and Supabase URL.');
+          
+          if (retries > 0 && (error.message.includes('Fetch') || error.message.includes('network') || error.message.includes('Network'))) {
+            console.log(`AuthContext: Retrying connection test in ${delay}ms... (${retries} attempts left)`);
+            setTimeout(() => testConnection(retries - 1, delay * 2), delay);
+          } else if (error.message.includes('Fetch') || error.message.includes('network') || error.message.includes('Network')) {
+            Alert.alert('Connection Error', 'Cannot reach Supabase. Please check your internet connection or if your network blocks Supabase.');
           }
         } else {
           console.log('AuthContext: Supabase connection test successful');
         }
-      });
+      } catch (err) {
+        console.error('AuthContext: Unexpected error during connection test:', err);
+        if (retries > 0) {
+          setTimeout(() => testConnection(retries - 1, delay * 2), delay);
+        }
+      }
+    };
+
+    testConnection();
+
+
 
 
     // Listen for auth changes

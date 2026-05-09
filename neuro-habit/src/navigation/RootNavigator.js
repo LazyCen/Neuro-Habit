@@ -5,13 +5,14 @@ import AppNavigator from './AppNavigator';
 import AuthScreen from '../screens/AuthScreen';
 import UsernameScreen from '../screens/UsernameScreen';
 import TutorialScreen from '../screens/TutorialScreen';
-import { colors } from '../theme/colors';
+import { useTheme } from '../context/ThemeContext';
 import Preloader from '../components/Preloader';
 
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
 
 export default function RootNavigator() {
   const { session, loading } = useAuth();
+  const { theme } = useTheme();
   const [isReady, setIsReady] = React.useState(false);
   const [showPreloader, setShowPreloader] = React.useState(true);
 
@@ -44,7 +45,7 @@ export default function RootNavigator() {
   const hasSeenTutorial = session?.user?.user_metadata?.tutorial_completed;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View style={{ flex: 1, backgroundColor: theme.background }}>
       {!session ? (
         <AuthScreen />
       ) : (!hasUsername && !hasSkippedUsername && !isGuest) ? (
@@ -60,3 +61,4 @@ export default function RootNavigator() {
 
 const styles = StyleSheet.create({
 });
+
