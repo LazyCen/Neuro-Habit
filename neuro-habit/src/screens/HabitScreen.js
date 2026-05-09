@@ -134,6 +134,9 @@ export default function HabitScreen() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user?.id) return;
 
+    // Trigger a sync for any pending offline habits or metrics
+    backendService.syncPendingData().catch(() => {});
+
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
@@ -274,6 +277,10 @@ export default function HabitScreen() {
 
             if (updateError && !controller.signal.aborted) {
               console.error('[HabitToggle] Supabase habit update failed:', updateError.message);
+              await backendService.queueHabitToggle(
+                id, latestHabit.completed, latestHabit.streak, latestHabit.completed ? now : currentMeta.lastCompletedAt
+              );
+              return; // queued, skip log insert
             }
 
             if (latestHabit.completed) {
@@ -283,6 +290,9 @@ export default function HabitScreen() {
                  .abortSignal(controller.signal);
                if (logError && !controller.signal.aborted) {
                  console.error('[HabitToggle] Supabase log insert failed:', logError.message);
+                 await backendService.queueHabitToggle(
+                   id, latestHabit.completed, latestHabit.streak, latestHabit.completed ? now : currentMeta.lastCompletedAt
+                 );
                }
             } else {
                const startOfDay = new Date();
@@ -295,6 +305,9 @@ export default function HabitScreen() {
                  .abortSignal(controller.signal);
                if (logError && !controller.signal.aborted) {
                  console.error('[HabitToggle] Supabase log delete failed:', logError.message);
+                 await backendService.queueHabitToggle(
+                   id, latestHabit.completed, latestHabit.streak, latestHabit.completed ? now : currentMeta.lastCompletedAt
+                 );
                }
             }
           } catch (err) {

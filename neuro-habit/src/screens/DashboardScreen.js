@@ -22,6 +22,8 @@ export default function DashboardScreen() {
   const navigation = useNavigation();
   const [hasUsagePerm, setHasUsagePerm] = React.useState(true);
   const [hasPedometerPerm, setHasPedometerPerm] = React.useState(true);
+  const [liveSteps, setLiveSteps] = React.useState(0);
+  const liveStepSubscriptionRef = React.useRef(null);
   const [stepProviderStatus, setStepProviderStatus] = React.useState({
     hasHealthConnect: true,
     hasAnyProvider: true,
@@ -67,6 +69,41 @@ export default function DashboardScreen() {
     AsyncStorage.getItem('hideSyncCard_v2').then(value => {
       if (value === 'true') setDismissedSync(true);
     }).catch(() => {});
+
+    // Start live step watcher as primary fallback when HC binding fails
+    const startLiveSteps = async () => {
+      try {
+        // Request pedometer permission first
+        await usageService.requestPedometerPermission();
+        // Seed baseline from cached daily steps so pedometer adds on top
+        let baseline = 0;
+        try {
+          const raw = await AsyncStorage.getItem('@NeuroHabit:DailyStepsCache');
+          if (raw) {
+            const { date, steps } = JSON.parse(raw);
+            const todayKey = new Date().toISOString().slice(0, 10);
+            if (date === todayKey && Number.isFinite(steps)) baseline = steps;
+          }
+        } catch (_e) {}
+
+        const sub = usageService.watchLiveSteps((stepsDelta) => {
+          // stepsDelta = steps since subscription started; add to today's baseline
+          setLiveSteps(baseline + stepsDelta);
+        });
+        liveStepSubscriptionRef.current = sub;
+      } catch (e) {
+        console.warn('[Dashboard] Could not start live step tracking:', e?.message);
+      }
+    };
+    startLiveSteps();
+
+    return () => {
+      // Clean up the step watcher on unmount
+      if (liveStepSubscriptionRef.current) {
+        usageService.stopWatchingLiveSteps(liveStepSubscriptionRef.current);
+        liveStepSubscriptionRef.current = null;
+      }
+    };
   }, []);
 
   useFocusEffect(
@@ -340,9 +377,18 @@ export default function DashboardScreen() {
               <Ionicons name="fitness" size={24} color={colors.green} />
             </View>
             <View style={themedStyles.heroBody}>
-              <Text style={themedStyles.heroValue}>{data.steps.toLocaleString()}</Text>
-              <Text style={themedStyles.heroLabel}>Steps today</Text>
-            </View>
+            <Text style={themedStyles.heroValue}>
+              {(data.steps > 0 ? data.steps : liveSteps).toLocaleString()}
+            </Text>
+            <Text style={themedStyles.heroLabel}>
+              {data.steps > 0 ? 'Steps today' : liveSteps > 0 ? 'Steps (live)' : 'Steps today'}
+            </Text>
+            {liveSteps > 0 && data.steps === 0 && (
+              <Text style={{ color: colors.subtext, fontSize: 11, marginTop: 4 }}>
+                Live tracking active — historical sync unavailable
+              </Text>
+            )}
+          </View>
           </Card>
         </Animated.View>
 

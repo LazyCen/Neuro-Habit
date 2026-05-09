@@ -320,22 +320,6 @@ export default function SettingsScreen() {
 
           <View style={themedStyles.divider} />
 
-          <TouchableOpacity style={themedStyles.settingRow} onPress={handleClearCache} disabled={clearingCache}>
-            <View style={themedStyles.settingLeft}>
-              <View style={[themedStyles.iconBox, { backgroundColor: colors.warning + '33' }]}>
-                <Ionicons name="refresh" size={20} color={colors.warning} />
-              </View>
-              <Text style={themedStyles.settingText}>Clear Local Cache</Text>
-            </View>
-            {clearingCache ? (
-              <ActivityIndicator size="small" color={colors.subtext} />
-            ) : (
-              <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
-            )}
-          </TouchableOpacity>
-
-          <View style={themedStyles.divider} />
-
           <TouchableOpacity style={themedStyles.settingRow} onPress={() => signOut(true)}>
              <View style={themedStyles.settingLeft}>
               <View style={[themedStyles.iconBox, { backgroundColor: colors.subtext + '33' }]}>

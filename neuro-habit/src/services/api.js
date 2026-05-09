@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const LOCAL_HABITS_KEY = 'local_habits_v1';
+const DAILY_STEPS_CACHE_KEY = '@NeuroHabit:DailyStepsCache';
 const DEFAULT_DASHBOARD_DATA = {
   steps: 0,
   screenTime: 0,
@@ -138,7 +139,7 @@ export async function fetchUserData() {
     }
 
     // Steps are sourced from pedometer APIs; screen time remains from usage stats.
-    return {
+    const result = {
       steps: dailySteps,
       screenTime: screenTime || 0,
       mood,
@@ -146,6 +147,14 @@ export async function fetchUserData() {
       habitsTotal,
       streak: 0,
     };
+
+    // Cache today's step count so the live-step baseline can be seeded on next open
+    if (dailySteps > 0) {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      AsyncStorage.setItem(DAILY_STEPS_CACHE_KEY, JSON.stringify({ date: todayKey, steps: dailySteps })).catch(() => {});
+    }
+
+    return result;
   } catch (error) {
     console.error('Error fetching user data:', error);
     return DEFAULT_DASHBOARD_DATA;

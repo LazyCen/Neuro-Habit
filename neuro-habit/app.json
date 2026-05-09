@@ -26,7 +26,8 @@
       "permissions": [
         "android.permission.PACKAGE_USAGE_STATS",
         "android.permission.ACTIVITY_RECOGNITION",
-        "android.permission.health.READ_STEPS"
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.WRITE_STEPS"
       ],
       "package": "com.neurohabit.app",
       "queries": [

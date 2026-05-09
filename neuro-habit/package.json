@@ -61,6 +61,7 @@
     "victory-native": "^36.6.11"
   },
   "devDependencies": {
+    "@react-native-community/cli": "latest",
     "@types/react": "~19.1.0",
     "babel-plugin-transform-remove-console": "^6.9.4",
     "eslint": "^9.25.0",

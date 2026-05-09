@@ -11,6 +11,7 @@ const PENDING_MOODS_KEY = 'pending_moods_v1';
 const PENDING_METRICS_KEY = 'pending_metrics_v1';
 const CACHED_INSIGHTS_KEY = 'cached_insights_v1';
 const LOCAL_HABITS_KEY = 'local_habits_v1';
+const PENDING_HABIT_TOGGLES_KEY = 'pending_habit_toggles_v1';
 const HABIT_META_KEY = 'habit_meta_v2';
 const DASHBOARD_CACHE_KEY = 'dashboard_data_cache_v1';
 const HIDE_SYNC_CARD_KEY = 'hideSyncCard_v2';
@@ -562,6 +563,7 @@ export const backendService = {
   async isOnline() {
     const baseUrls = getApiBaseUrls();
     try {
+      // 1. Try to ping the custom backend(s)
       await Promise.any(
         baseUrls.map(async (baseUrl) => {
           const response = await fetchWithTimeout(`${baseUrl}/`, {}, 3000);
@@ -571,7 +573,14 @@ export const backendService = {
       );
       return true;
     } catch (e) {
-      return false;
+      // 2. If custom backend is down, check general internet connectivity (e.g., Supabase or Google)
+      try {
+        const publicPing = await fetchWithTimeout(process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://www.google.com', { method: 'HEAD' }, 3000);
+        // If we can reach Supabase or Google, we are "online"
+        return publicPing.ok || publicPing.status < 500;
+      } catch (internetError) {
+        return false;
+      }
     }
   },
 
@@ -596,6 +605,82 @@ export const backendService = {
     // Retry fetching trusted time if it failed earlier (e.g. during tunnel traversal)
     if (!timeSynced) {
       this.fetchTrustedTime().catch(() => {});
+    }
+
+    // Sync offline habits first
+    try {
+      const localHabits = await getArrayStorage(LOCAL_HABITS_KEY);
+      if (localHabits.length > 0) {
+        const remainingHabits = [];
+        let anySynced = false;
+        
+        for (const habit of localHabits) {
+          try {
+            // Check if it's already a UUID (just in case), local ones start with 'local-'
+            if (habit.id && !habit.id.toString().startsWith('local-')) {
+              continue;
+            }
+            
+            const res = await this.createHabit(habit.name);
+            if (res && !res.error) {
+              anySynced = true;
+            } else {
+              remainingHabits.push(habit);
+            }
+          } catch (e) {
+            remainingHabits.push(habit);
+          }
+        }
+        
+        if (anySynced || remainingHabits.length !== localHabits.length) {
+          await setArrayStorage(LOCAL_HABITS_KEY, remainingHabits);
+        }
+      }
+    } catch (e) {
+      console.error('[Sync] Error syncing local habits:', e);
+    }
+
+    // Sync offline habit toggles
+    try {
+      const pendingToggles = await getArrayStorage(PENDING_HABIT_TOGGLES_KEY);
+      if (pendingToggles.length > 0) {
+        const remainingToggles = [];
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        for (const item of pendingToggles) {
+          try {
+            if (!session?.user?.id) throw new Error('No user');
+            
+            // Sync to habits table
+            const { error: updateError } = await supabase
+              .from('habits')
+              .update({ streak: item.streak, last_completed_at: item.lastCompletedAt })
+              .eq('id', item.id);
+              
+            if (updateError) throw updateError;
+            
+            // Sync to habit_logs
+            if (item.completed) {
+               await supabase
+                 .from('habit_logs')
+                 .insert({ habit_id: item.id, user_id: session.user.id, status: 'completed', created_at: item.lastCompletedAt });
+            } else {
+               const startOfDay = new Date();
+               startOfDay.setHours(0, 0, 0, 0);
+               await supabase
+                 .from('habit_logs')
+                 .delete()
+                 .eq('habit_id', item.id)
+                 .gte('created_at', startOfDay.toISOString());
+            }
+          } catch (e) {
+            remainingToggles.push(item);
+          }
+        }
+        await setArrayStorage(PENDING_HABIT_TOGGLES_KEY, remainingToggles);
+      }
+    } catch (e) {
+      console.error('[Sync] Error syncing habit toggles:', e);
     }
 
     const MAX_RETRIES = 8;
@@ -778,6 +863,16 @@ export const backendService = {
     }
   },
 
+  async queueHabitToggle(id, completed, streak, lastCompletedAt) {
+    await appendArrayStorage(PENDING_HABIT_TOGGLES_KEY, {
+      id,
+      completed,
+      streak,
+      lastCompletedAt,
+      queuedAt: new Date().toISOString()
+    });
+  },
+
   async deleteAccount() {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
@@ -805,6 +900,7 @@ export const backendService = {
       const keysToClear = [
         CACHED_INSIGHTS_KEY,
         LOCAL_HABITS_KEY,
+        PENDING_HABIT_TOGGLES_KEY,
         HABIT_META_KEY,
         DASHBOARD_CACHE_KEY,
         HIDE_SYNC_CARD_KEY,
