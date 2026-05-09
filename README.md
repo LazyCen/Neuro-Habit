@@ -56,23 +56,6 @@ npm run start
 To run on an Android device/emulator:
 npm run android
 
-## APK Build (Install-Ready)
-
-The project is configured to generate separate builds for different CPU architectures to optimize file size. Release APKs are located in:
-neuro-habit/android/app/build/outputs/apk/release/
-
-Available Architectures:
-
-- app-arm64-v8a-release.apk (Recommended for most modern Android phones)
-- app-armeabi-v7a-release.apk (For older 32-bit Android devices)
-- app-x86-release.apk (For 32-bit emulators)
-- app-x86_64-release.apk (For 64-bit emulators and some Chromebooks)
-
-### Installing via ADB
-
-To install the arm64 version on a connected device:
-adb install -r "neuro-habit/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk"
-
 ## Inspiration
 
 This project is inspired by the book Neuro Habits, with a focus on the idea that small repeated actions can create meaningful long-term behavioral change.
