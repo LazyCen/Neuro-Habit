@@ -46,7 +46,8 @@ function getApiBaseUrls() {
     urls.push('http://localhost:8000');
   }
 
-  return [...new Set(urls.filter(Boolean))];
+  // Filter out placeholders
+  return [...new Set(urls.filter(url => url && !url.includes('your-production-api-url.com')))];
 }
 
 let activeBackendUrl = null;
@@ -181,24 +182,37 @@ async function getEncryptedStorage() {
   try {
     let key = await SecureStore.getItemAsync('mmkv_encryption_key');
     if (!key) {
-      // Generate a cryptographically secure 256-bit (32-byte) random key.
-      // expo-crypto uses the platform CSPRNG (SecRandomCopyBytes on iOS,
-      // /dev/urandom on Android) — never Math.random().
-      const randomBytes = await Crypto.getRandomBytesAsync(32);
-      key = Array.from(randomBytes)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-      await SecureStore.setItemAsync('mmkv_encryption_key', key);
+      try {
+        const randomBytes = await Crypto.getRandomBytesAsync(32);
+        // Ensure we have a regular array for mapping to hex strings
+        const bytesArray = Array.from(randomBytes);
+        key = bytesArray
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+        await SecureStore.setItemAsync('mmkv_encryption_key', key);
+      } catch (cryptoError) {
+        console.warn('Crypto key generation failed, falling back to unencrypted storage:', cryptoError);
+        encryptedStorage = new MMKV({ id: 'secure-offline-data' });
+        return encryptedStorage;
+      }
     }
+
+    if (typeof MMKV !== 'function') {
+      throw new Error('MMKV undefined');
+    }
+
     encryptedStorage = new MMKV({
       id: 'secure-offline-data',
       encryptionKey: key,
     });
     return encryptedStorage;
   } catch (e) {
-    console.error('Failed to initialize encrypted MMKV storage', e);
-    encryptedStorage = new MMKV({ id: 'secure-offline-data' });
-    return encryptedStorage;
+    // Final fallback to unencrypted storage if MMKV exists
+    if (typeof MMKV === 'function') {
+        encryptedStorage = new MMKV({ id: 'secure-offline-data' });
+        return encryptedStorage;
+    }
+    throw e;
   }
 }
 
@@ -209,8 +223,14 @@ async function getSecureArray(key) {
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    console.error(`[MMKV] Error reading ${key}:`, e);
-    return [];
+    try {
+      const raw = await AsyncStorage.getItem(`fallback_${key}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (fallbackError) {
+      console.error(`[AsyncStorage] Fallback read error for ${key}:`, fallbackError);
+      return [];
+    }
   }
 }
 
@@ -219,7 +239,11 @@ async function setSecureArray(key, value) {
     const storage = await getEncryptedStorage();
     storage.set(key, JSON.stringify(value));
   } catch (e) {
-    console.error(`[MMKV] Error writing ${key}:`, e);
+    try {
+      await AsyncStorage.setItem(`fallback_${key}`, JSON.stringify(value));
+    } catch (fallbackError) {
+      console.error(`[AsyncStorage] Fallback write error for ${key}:`, fallbackError);
+    }
   }
 }
 
@@ -469,8 +493,8 @@ async function fetchInsightsViaSupabase() {
   return Array.isArray(data) ? data : [];
 }
 
-async function createHabitViaSupabase(name) {
-  const trimmedValue = typeof name === 'string' ? name.trim() : '';
+async function createHabitViaSupabase(title) {
+  const trimmedValue = typeof title === 'string' ? title.trim() : '';
   if (!trimmedValue) {
     throw new Error('Habit name is required');
   }
@@ -483,7 +507,7 @@ async function createHabitViaSupabase(name) {
 
   const { data, error } = await supabase
     .from('habits')
-    .insert([{ user_id: userId, name: trimmedValue }])
+    .insert([{ user_id: userId, title: trimmedValue }])
     .select()
     .single();
 
@@ -727,7 +751,7 @@ export const backendService = {
     }
   },
 
-  async createHabit(name) {
+  async createHabit(title) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
@@ -735,11 +759,11 @@ export const backendService = {
       return await fetchFromBackend(`/habits${userId ? `?user_id=${userId}` : ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ title }),
       });
     } catch (backendError) {
       try {
-        return await createHabitViaSupabase(name);
+        return await createHabitViaSupabase(title);
       } catch (supabaseError) {
         console.error('Error creating habit:', supabaseError);
         return {
@@ -770,16 +794,23 @@ export const backendService = {
   async purgeAllLocalData(force = true) {
     try {
       // 1. Clear encrypted MMKV instance (Moods, Metrics, etc.)
-      const storage = await getEncryptedStorage();
-      storage.clearAll();
+      try {
+        const storage = await getEncryptedStorage();
+        storage.clearAll();
+      } catch (mmkvError) {
+        console.warn('[backendService] Could not clear MMKV storage, may be using fallback:', mmkvError);
+      }
       
-      // 2. Clear AsyncStorage (Insights, Habits, Dashboard Cache, UI flags)
+      // 2. Clear AsyncStorage (Insights, Habits, Dashboard Cache, UI flags, and MMKV fallbacks)
       const keysToClear = [
         CACHED_INSIGHTS_KEY,
         LOCAL_HABITS_KEY,
         HABIT_META_KEY,
         DASHBOARD_CACHE_KEY,
-        HIDE_SYNC_CARD_KEY
+        HIDE_SYNC_CARD_KEY,
+        `fallback_${LOCAL_MOOD_LOGS_KEY}`,
+        `fallback_${PENDING_MOODS_KEY}`,
+        `fallback_${PENDING_METRICS_KEY}`
       ];
       await AsyncStorage.multiRemove(keysToClear);
       

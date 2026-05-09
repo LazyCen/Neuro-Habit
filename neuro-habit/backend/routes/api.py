@@ -97,7 +97,7 @@ async def get_insights(request: Request, user=Depends(get_current_user), client:
 @router.post("/habits")
 @limiter.limit(LIMIT_WRITE)
 async def create_habit(request: Request, habit: Habit, user=Depends(get_current_user), client: Client = Depends(get_user_client)):
-    data = {"user_id": user.id, "name": habit.name}
+    data = {"user_id": user.id, "title": habit.title}
     response = check_supabase_response(client.table("habits").insert(data).execute())
     return response.data[0] if response.data else {"status": "error"}
 

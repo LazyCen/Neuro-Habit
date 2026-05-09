@@ -4,7 +4,7 @@ import datetime
 
 class Habit(BaseModel):
     id: Optional[str] = None
-    name: str = Field(..., min_length=1, max_length=100)
+    title: str = Field(..., min_length=1, max_length=100)
 
 class MoodLog(BaseModel):
     mood: int = Field(..., ge=1, le=10)

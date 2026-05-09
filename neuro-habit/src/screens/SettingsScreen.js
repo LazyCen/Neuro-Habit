@@ -185,20 +185,31 @@ export default function SettingsScreen() {
 
           <View style={themedStyles.section}>
             <Text style={themedStyles.sectionTitle}>Profile Details</Text>
-            <TextInput
-              style={themedStyles.input}
-              value={firstName}
-              onChangeText={setFirstName}
-              placeholder="First name"
-              placeholderTextColor={colors.subtext}
-            />
-            <TextInput
-              style={themedStyles.input}
-              value={lastName}
-              onChangeText={setLastName}
-              placeholder="Last name"
-              placeholderTextColor={colors.subtext}
-            />
+            
+            <View style={themedStyles.inputRow}>
+              <View style={themedStyles.inputHalf}>
+                <Text style={themedStyles.inputLabel}>First Name</Text>
+                <TextInput
+                  style={themedStyles.input}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  placeholder="First"
+                  placeholderTextColor={colors.subtext}
+                />
+              </View>
+              <View style={themedStyles.inputHalf}>
+                <Text style={themedStyles.inputLabel}>Last Name</Text>
+                <TextInput
+                  style={themedStyles.input}
+                  value={lastName}
+                  onChangeText={setLastName}
+                  placeholder="Last"
+                  placeholderTextColor={colors.subtext}
+                />
+              </View>
+            </View>
+
+            <Text style={themedStyles.inputLabel}>Username</Text>
             <TextInput
               style={themedStyles.input}
               value={username}
@@ -207,7 +218,11 @@ export default function SettingsScreen() {
               placeholderTextColor={colors.subtext}
               autoCapitalize="none"
             />
-            <Text style={themedStyles.avatarPickerTitle}>Pick a cute avatar</Text>
+
+            <View style={themedStyles.divider} />
+
+            <Text style={themedStyles.inputLabel}>Avatar</Text>
+            <Text style={themedStyles.avatarPickerSubtitle}>Pick an emoji that represents you</Text>
             <View style={themedStyles.avatarGrid}>
               {ANIMAL_AVATARS.map((emoji) => (
                 <TouchableOpacity
@@ -223,7 +238,7 @@ export default function SettingsScreen() {
               ))}
             </View>
             <TouchableOpacity style={themedStyles.saveButton} onPress={handleSaveProfile} disabled={savingProfile}>
-              {savingProfile ? <ActivityIndicator color={colors.white} /> : <Text style={themedStyles.saveButtonText}>Save Profile</Text>}
+              {savingProfile ? <ActivityIndicator color={colors.white} /> : <Text style={themedStyles.saveButtonText}>Save Profile Changes</Text>}
             </TouchableOpacity>
           </View>
 
@@ -241,8 +256,8 @@ export default function SettingsScreen() {
                 <ActivityIndicator color={colors.white} />
               ) : (
                 <>
-                  <Ionicons name="trash" size={16} color={colors.white} />
-                  <Text style={themedStyles.deleteButtonText}>Delete Account</Text>
+                   <Ionicons name="trash" size={16} color={colors.white} />
+                   <Text style={themedStyles.deleteButtonText}>Delete Account and Data</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -327,17 +342,6 @@ export default function SettingsScreen() {
                 <Ionicons name="log-out" size={20} color={colors.subtext} />
               </View>
               <Text style={[themedStyles.settingText, { color: colors.subtext }]}>Log Out</Text>
-            </View>
-          </TouchableOpacity>
-
-          <View style={themedStyles.divider} />
-
-          <TouchableOpacity style={themedStyles.settingRow} onPress={handleDeleteAccount}>
-             <View style={themedStyles.settingLeft}>
-              <View style={[themedStyles.iconBox, { backgroundColor: colors.danger + '33' }]}>
-                <Ionicons name="trash" size={20} color={colors.danger} />
-              </View>
-              <Text style={[themedStyles.settingText, { color: colors.danger }]}>Delete Account and Data</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -496,6 +500,21 @@ const styles = (colors) => StyleSheet.create({
   editBox: {
     marginTop: 8,
   },
+  inputRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  inputHalf: {
+    flex: 1,
+  },
+  inputLabel: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 6,
+    marginLeft: 4,
+  },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -504,14 +523,15 @@ const styles = (colors) => StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 10,
+    marginBottom: 14,
     outlineStyle: "none",
   },
-  avatarPickerTitle: {
+  avatarPickerSubtitle: {
     color: colors.subtext,
     fontSize: 13,
-    marginTop: 4,
-    marginBottom: 8,
+    marginTop: -4,
+    marginBottom: 12,
+    marginLeft: 4,
   },
   avatarGrid: {
     flexDirection: "row",

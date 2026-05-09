@@ -1,7 +1,7 @@
 from fastapi import Security, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import Client, create_client
-from .config import supabase, admin_supabase, SUPABASE_URL, SUPABASE_KEY, CRON_SECRET, HTTP_CLIENT, ClientOptions
+from .config import supabase, admin_supabase, SUPABASE_URL, SUPABASE_KEY, CRON_SECRET
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -21,12 +21,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
 def get_user_client(credentials: HTTPAuthorizationCredentials = Security(_bearer_scheme)) -> Client:
     if not credentials:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    # Reuse the shared HTTP_CLIENT pool to prevent socket exhaustion
-    client = create_client(
-        SUPABASE_URL, 
-        SUPABASE_KEY, 
-        options=ClientOptions(http_client=HTTP_CLIENT)
-    )
+    
+    client = create_client(SUPABASE_URL, SUPABASE_KEY)
     client.postgrest.auth(credentials.credentials)
     return client
 

@@ -69,14 +69,6 @@ react {
 def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
 
 /**
- * Whether to enable separate builds per CPU architecture.
- * This will create multiple APKs for each architecture, which can significantly
- * reduce the size of the final APK.
- */
-def enableSeparateBuildPerCPUArchitecture = true
-
-
-/**
  * The preferred build flavor of JavaScriptCore (JSC)
  *
  * For example, to use the international variant, you can use:
@@ -88,6 +80,8 @@ def enableSeparateBuildPerCPUArchitecture = true
  * this variant is about 6MiB larger per architecture than default.
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+
+apply from: new File(["node", "--print", "require('path').dirname(require.resolve('@sentry/react-native/package.json'))"].execute().text.trim(), "sentry.gradle")
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -105,16 +99,6 @@ android {
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
-
-    splits {
-        abi {
-            reset()
-            enable enableSeparateBuildPerCPUArchitecture
-            universalApk false  // If true, also generate a universal APK
-            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
-        }
-    }
-
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -148,6 +132,7 @@ android {
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
+
 }
 
 // Apply static values from `gradle.properties` to the `android.packagingOptions`

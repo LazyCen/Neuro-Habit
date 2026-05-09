@@ -28,7 +28,15 @@
         "android.permission.ACTIVITY_RECOGNITION",
         "android.permission.health.READ_STEPS"
       ],
-      "package": "com.neurohabit.app"
+      "package": "com.neurohabit.app",
+      "queries": [
+        {
+          "package": "com.google.android.apps.healthdata"
+        },
+        {
+          "package": "com.google.android.healthconnect.controller"
+        }
+      ]
     },
     "web": {
       "output": "single",
@@ -58,7 +66,8 @@
       ],
       "expo-web-browser",
       "expo-secure-store",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "react-native-health-connect"
     ],
     "experiments": {
       "reactCompiler": true

@@ -154,9 +154,11 @@ export async function fetchUserData() {
 
 export async function fetchWeeklyStepTrend(todaySteps = 0) {
   const days = getCurrentWeekMondayFirst();
-  const fallback = days.map((date, index) => ({
+  const todayStr = new Date().toISOString().slice(0, 10);
+  
+  const fallback = days.map((date) => ({
     day: formatShortDay(date),
-    steps: index === days.length - 1 ? Math.max(0, Math.round(todaySteps || 0)) : 0,
+    steps: date.toISOString().slice(0, 10) === todayStr ? Math.max(0, Math.round(todaySteps || 0)) : 0,
   }));
 
   try {
@@ -185,10 +187,11 @@ export async function fetchWeeklyStepTrend(todaySteps = 0) {
       data.map((item) => [item.date, Number.isFinite(item.steps) ? item.steps : 0])
     );
 
-    return days.map((date, index) => {
+    return days.map((date) => {
       const key = date.toISOString().slice(0, 10);
       const dbSteps = stepMap.has(key) ? stepMap.get(key) : 0;
-      const steps = index === days.length - 1 ? Math.max(dbSteps, Math.round(todaySteps || 0)) : dbSteps;
+      // If it's today, we prioritize the live todaySteps passed in, but only if it's >= what's in DB
+      const steps = key === todayStr ? Math.max(dbSteps, Math.round(todaySteps || 0)) : dbSteps;
       return {
         day: formatShortDay(date),
         steps,

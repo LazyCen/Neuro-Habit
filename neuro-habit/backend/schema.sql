@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS habits (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
-  name TEXT NOT NULL CHECK (char_length(name) <= 100),
+  title TEXT NOT NULL CHECK (char_length(title) <= 100),
   streak INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

@@ -10,8 +10,6 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 import expo.modules.ReactActivityDelegateWrapper
-
-// Required by react-native-health-connect v3.x to initialize the permission launcher
 import dev.matinzd.healthconnect.permissions.HealthConnectPermissionDelegate
 
 class MainActivity : ReactActivity() {
@@ -23,10 +21,11 @@ class MainActivity : ReactActivity() {
     // @generated begin expo-splashscreen - expo prebuild (DO NOT MODIFY) sync-f3ff59a738c56c9a6119210cb55f0b613eb8b6af
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
-    super.onCreate(null)
-    // Initialize the Health Connect permission launcher so that
-    // requestPermission is not uninitialized when JS calls it.
+    
+    // Initialize Health Connect Permission Delegate to prevent uninitialized property crash
     HealthConnectPermissionDelegate.setPermissionDelegate(this)
+    
+    super.onCreate(null)
   }
 
   /**

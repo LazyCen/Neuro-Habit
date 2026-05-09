@@ -49,22 +49,12 @@ if ENVIRONMENT == "production" and "127.0.0.1" in TRUSTED_PROXIES and len(TRUSTE
     pass 
 
 
-# Shared HTTPX client to prevent socket exhaustion and improve performance
-# We use a large pool size to handle high concurrency
-HTTP_CLIENT = httpx.Client(
-    timeout=30.0,
-    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
-)
-
-
 supabase: Client = create_client(
     SUPABASE_URL, 
-    SUPABASE_KEY, 
-    options=ClientOptions(http_client=HTTP_CLIENT)
+    SUPABASE_KEY
 )
 
 admin_supabase: Client = create_client(
     SUPABASE_URL, 
-    SUPABASE_SERVICE_ROLE_KEY, 
-    options=ClientOptions(http_client=HTTP_CLIENT)
+    SUPABASE_SERVICE_ROLE_KEY
 )

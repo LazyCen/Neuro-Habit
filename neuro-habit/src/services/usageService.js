@@ -1,9 +1,43 @@
 import { Platform, Linking } from 'react-native';
 import { Pedometer, Accelerometer } from 'expo-sensors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let UsageStats = null;
 let HealthConnect = null;
-let GoogleFit = null;
+let isHealthConnectEnabled = true; // Emergency kill-switch if binding keeps failing
+let _hcCrashChecked = false;
+
+async function checkCrashLoop() {
+  if (_hcCrashChecked) return isHealthConnectEnabled;
+  _hcCrashChecked = true;
+  try {
+    // Resetting crash breaker for this development run to test the new MainActivity.kt fix
+    await AsyncStorage.removeItem('@NeuroHabit:HC_Crashed');
+    
+    const crashed = await AsyncStorage.getItem('@NeuroHabit:HC_Crashed');
+    if (crashed === 'true') {
+      console.warn('[usageService] Health Connect crashed on last attempt. Disabling permanently.');
+      isHealthConnectEnabled = false;
+    }
+  } catch (e) { }
+  return isHealthConnectEnabled;
+}
+
+async function safeNativeCall(operation) {
+  const enabled = await checkCrashLoop();
+  if (!enabled) return null;
+  
+  try {
+    await AsyncStorage.setItem('@NeuroHabit:HC_Crashed', 'true');
+    const result = await operation();
+    await AsyncStorage.removeItem('@NeuroHabit:HC_Crashed');
+    return result;
+  } catch (e) {
+    await AsyncStorage.removeItem('@NeuroHabit:HC_Crashed');
+    throw e;
+  }
+}
+
 try {
   UsageStats = Platform.OS === 'android' ? require('@antardev/react-native-usage-stats').default : null;
 } catch (_e) {
@@ -21,13 +55,7 @@ try {
   console.warn('Health Connect module not available.');
 }
 
-try {
-  if (Platform.OS === 'android') {
-    GoogleFit = require('react-native-google-fit').default || require('react-native-google-fit');
-  }
-} catch (_e) {
-  console.warn('Google Fit module not available.');
-}
+
 
 // Health Connect SDK availability status codes
 // SDK_AVAILABLE = 3, SDK_UNAVAILABLE = 1, SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED = 2
@@ -39,14 +67,7 @@ const STEP_THRESHOLD = 1.2;
 const MIN_STEP_INTERVAL_MS = 300;
 const GRAVITY_EARTH = 9.81;
 
-async function isGoogleFitInstalled() {
-    if (Platform.OS !== 'android') return false;
-    try {
-      return await Linking.canOpenURL('googlefit://');
-    } catch (_e) {
-      return false;
-    }
-  }
+
 
 export const usageService = {
   async getStepProviderStatus() {
@@ -56,7 +77,6 @@ export const usageService = {
     const status = {
       isHealthConnectSupported: isAndroid && sdkVersion >= ANDROID_VERSION_PIE,
       hasHealthConnect: false,
-      hasGoogleFit: false,
       hasAnyProvider: false,
       recommendedInstall: 'Health Connect',
     };
@@ -66,29 +86,32 @@ export const usageService = {
       return status;
     }
 
-    if (status.isHealthConnectSupported && HealthConnect) {
+    if (status.isHealthConnectSupported && HealthConnect && isHealthConnectEnabled) {
       try {
         if (typeof HealthConnect.getSdkStatus === 'function') {
           const sdkStatus = await HealthConnect.getSdkStatus();
+          console.log('[usageService] Health Connect SDK status:', sdkStatus);
           // SDK_AVAILABLE = 3
           status.hasHealthConnect = sdkStatus === HC_SDK_AVAILABLE;
         } else if (typeof HealthConnect.initialize === 'function') {
           // Some builds expose initialize() directly without getSdkStatus
+          console.log('[usageService] getSdkStatus missing, trying initialize...');
           const initialized = await HealthConnect.initialize();
           status.hasHealthConnect = initialized === true;
         }
       } catch (_e) {
         console.warn('Health Connect status check failed:', _e?.message);
         status.hasHealthConnect = false;
+        isHealthConnectEnabled = false; // Disable for this session if it failed basic check
       }
     }
 
-    status.hasGoogleFit = Boolean(GoogleFit) || await isGoogleFitInstalled();
-    status.hasAnyProvider = status.hasHealthConnect || status.hasGoogleFit;
-    status.recommendedInstall = status.isHealthConnectSupported ? 'Health Connect' : 'Google Fit';
+    status.hasAnyProvider = status.hasHealthConnect;
+    status.recommendedInstall = 'Health Connect';
     
     // Check if already authorized (silently)
-    status.isAuthorized = await this.hasStepPermission();
+    // Only check if we are reasonably sure it won't crash
+    status.isAuthorized = status.hasHealthConnect ? await this.hasStepPermission() : false;
     
     return status;
   },
@@ -99,27 +122,45 @@ export const usageService = {
     }
 
     // Android: check Health Connect then Google Fit
-    if (HealthConnect && Platform.Version >= ANDROID_VERSION_PIE) {
+    if (HealthConnect && isHealthConnectEnabled && Platform.OS === 'android' && Platform.Version >= ANDROID_VERSION_PIE) {
       try {
-        const granted = typeof HealthConnect.getGrantedPermissions === 'function'
-          ? await HealthConnect.getGrantedPermissions()
-          : [];
-        if (Array.isArray(granted) && granted.some(p => (p.recordType === 'Steps' || p.recordType === 'steps'))) {
+        // FAST PATH: Do not crash the app by calling native permissions automatically.
+        // Only call native if we have previously authorized.
+        const cachedAuth = await AsyncStorage.getItem('@NeuroHabit:HealthConnectAuthorized');
+        if (cachedAuth !== 'true') {
+           return false;
+        }
+
+        // Double check status before calling potentially crashing methods
+        if (typeof HealthConnect.getSdkStatus === 'function') {
+          const sdkStatus = await HealthConnect.getSdkStatus();
+          if (sdkStatus !== HC_SDK_AVAILABLE) return false;
+        }
+
+        if (typeof HealthConnect.initialize === 'function') {
+          await HealthConnect.initialize();
+        }
+        
+        // Final guard: check if we can even interact with the module
+        if (typeof HealthConnect.getGrantedPermissions !== 'function') return false;
+
+        const granted = await safeNativeCall(async () => await HealthConnect.getGrantedPermissions());
+        if (Array.isArray(granted) && (
+          granted.some(p => (p.recordType === 'Steps' || p.recordType === 'steps')) ||
+          granted.some(p => (p === 'Steps' || p === 'steps'))
+        )) {
           return true;
         }
-      } catch (_e) {}
+      } catch (_e) {
+        console.warn('Health Connect permission check failed safely:', _e?.message);
+        isHealthConnectEnabled = false; // Disable if it crashed/failed
+      }
     }
 
-    if (GoogleFit) {
-      try {
-        if (typeof GoogleFit.checkIsAuthorized === 'function') {
-          await GoogleFit.checkIsAuthorized();
-          return GoogleFit.isAuthorized === true;
-        }
-      } catch (_e) {}
-    }
 
-    return false;
+
+    // Fallback to Pedometer check for Android
+    return await this.hasPedometerPermission();
   },
 
   async requestStepPermissions() {
@@ -131,33 +172,32 @@ export const usageService = {
       try {
         const initialized = await HealthConnect.initialize();
         if (initialized) {
-          const granted = await HealthConnect.requestPermission([
+          // Add a small delay to ensure native activity/delegate is fully ready
+          await new Promise(resolve => setTimeout(resolve, 100));
+          const granted = await safeNativeCall(async () => await HealthConnect.requestPermission([
             { accessType: 'read', recordType: 'Steps' },
-          ]);
+          ]));
           healthConnectGranted = Array.isArray(granted)
             && granted.some((item) => item?.recordType === 'Steps' && item?.accessType === 'read');
+            
+          if (healthConnectGranted) {
+             await AsyncStorage.setItem('@NeuroHabit:HealthConnectAuthorized', 'true');
+          }
         }
       } catch (_e) {
         healthConnectGranted = false;
       }
     }
 
-    if (status.hasGoogleFit && GoogleFit?.authorize) {
-      try {
-        const authResult = await GoogleFit.authorize({
-          scopes: ['activity'],
-        });
-        googleFitGranted = authResult?.success === true || authResult === true;
-      } catch (_e) {
-        googleFitGranted = false;
-      }
-    }
+
+
+    // Fallback: also request Expo Pedometer permission (ACTIVITY_RECOGNITION on Android)
+    const pedometerGranted = await this.requestPedometerPermission();
 
     return {
       ...status,
       healthConnectGranted,
-      googleFitGranted,
-      granted: healthConnectGranted || googleFitGranted,
+      granted: healthConnectGranted || pedometerGranted,
     };
   },
 
@@ -267,6 +307,12 @@ export const usageService = {
       // Only attempt Health Connect if OS supports it and module loaded
       if (HealthConnect && Platform.Version >= ANDROID_VERSION_PIE) {
         try {
+          // Check SDK status first
+          if (typeof HealthConnect.getSdkStatus === 'function') {
+            const sdkStatus = await HealthConnect.getSdkStatus();
+            if (sdkStatus !== HC_SDK_AVAILABLE) return 0;
+          }
+
           // FIX: Decouple data retrieval from permission requests.
           // First, check if we already have permission without triggering any initialization side-effects.
           const isAuthorized = await this.hasStepPermission();
@@ -274,13 +320,13 @@ export const usageService = {
           if (isAuthorized && typeof HealthConnect.initialize === 'function') {
             const initialized = await HealthConnect.initialize();
             if (initialized && typeof HealthConnect.readRecords === 'function') {
-              const result = await HealthConnect.readRecords('Steps', {
+               const result = await safeNativeCall(async () => await HealthConnect.readRecords('Steps', {
                   timeRangeFilter: {
                     operator: 'between',
                     startTime: startOfDay.toISOString(),
                     endTime: now.toISOString(),
                   },
-                });
+                }));
 
                 const records = Array.isArray(result?.records) ? result.records : [];
                 const total = records.reduce((sum, record) => {
@@ -294,46 +340,15 @@ export const usageService = {
                 }
               }
             }
-          }
         } catch (_e) {
           console.warn('[Steps] Health Connect fetch failed:', _e?.message);
           // Fall through to Google Fit
         }
       }
 
-      if (GoogleFit) {
-        try {
-          if (typeof GoogleFit.getDailyStepCountSamples === 'function') {
-            const samples = await GoogleFit.getDailyStepCountSamples({
-              startDate: startOfDay.toISOString(),
-              endDate: now.toISOString(),
-            });
-            if (Array.isArray(samples)) {
-              const total = samples.reduce((sum, sample) => {
-                const sampleSteps = Number(sample?.steps || sample?.value || 0);
-                return sum + sampleSteps;
-              }, 0);
-              if (Number.isFinite(total) && total >= 0) {
-                return total;
-              }
-            }
-          }
 
-          if (typeof GoogleFit.getSteps === 'function') {
-            const steps = await GoogleFit.getSteps(startOfDay.toISOString(), now.toISOString());
-            if (Array.isArray(steps)) {
-              const total = steps.reduce((sum, item) => sum + Number(item?.value || item?.steps || 0), 0);
-              if (Number.isFinite(total) && total >= 0) {
-                return total;
-              }
-            }
-          }
-        } catch (_e) {
-          console.warn('Google Fit daily step fetch failed:', _e);
-        }
-      }
 
-      // No step data available on Android without Health Connect or Google Fit.
+      console.warn('[Steps] Health Connect unavailable. Android does not support Pedometer historical data.');
       return 0;
     }
 
