@@ -1,0 +1,35 @@
+name: Backend Load Testing
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run Load Test
+        run: |
+          k6 run backend/load-testing/scripts/stress_test.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          API_URL: ${{ secrets.TEST_API_URL }}
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-report
+          path: results.json
+        if: always()

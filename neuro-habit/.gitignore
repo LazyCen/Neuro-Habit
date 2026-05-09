@@ -29,6 +29,7 @@ web-build/
 **/venv/
 **/env/
 backend/.env
+backend/load-testing/.env
 backend/db.sqlite3
 
 # Environment
