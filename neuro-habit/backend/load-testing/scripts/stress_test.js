@@ -57,43 +57,42 @@ const API_URL = __ENV.API_URL || 'http://localhost:8000';
 const TEST_USER_EMAIL = __ENV.TEST_USER_EMAIL;
 const TEST_USER_PASSWORD = __ENV.TEST_USER_PASSWORD;
 
-export default function () {
+export function setup() {
   // Validate that required env vars are present
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !TEST_USER_EMAIL || !TEST_USER_PASSWORD) {
-    console.error('Missing required environment variables. Please check your .env file or environment settings.');
+    throw new Error('Missing required environment variables for setup.');
+  }
+
+  const loginUrl = `${SUPABASE_URL}/auth/v1/token?grant_type=password`;
+  const payload = JSON.stringify({
+    email: TEST_USER_EMAIL,
+    password: TEST_USER_PASSWORD,
+  });
+  const params = {
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+    },
+  };
+
+  const res = http.post(loginUrl, payload, params);
+  
+  if (res.status !== 200) {
+    console.error(`Setup failed: Login returned status ${res.status}. ${res.body}`);
+    return { token: null };
+  }
+
+  const token = res.json('access_token');
+  console.log('Setup complete: Token acquired');
+  return { token };
+}
+
+export default function (data) {
+  const token = data.token;
+  if (!token) {
+    ErrorRate.add(1);
     return;
   }
-  let token = null;
-
-  // Group: Authentication
-  group('Authentication', function () {
-    const loginUrl = `${SUPABASE_URL}/auth/v1/token?grant_type=password`;
-    const payload = JSON.stringify({
-      email: TEST_USER_EMAIL,
-      password: TEST_USER_PASSWORD,
-    });
-    const params = {
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_ANON_KEY,
-      },
-    };
-
-    const res = http.post(loginUrl, payload, params);
-    const success = check(res, {
-      'login successful': (r) => r.status === 200,
-      'has access token': (r) => r.json('access_token') !== undefined,
-    });
-
-    if (success) {
-      token = res.json('access_token');
-      AuthDuration.add(res.timings.duration);
-    } else {
-      ErrorRate.add(1);
-    }
-  });
-
-  if (!token) return;
 
   const authHeaders = {
     'Authorization': `Bearer ${token}`,
@@ -148,16 +147,5 @@ export default function () {
 
     sleep(Math.random() * 5 + 2); // Think time: 2-7s
   });
-
-  // Group: Websocket Simulation (Placeholder if enabled in future)
-  // k6 supports WebSockets via 'k6/ws'
-  /*
-  group('Websocket Presence', function() {
-    const url = `${SUPABASE_URL.replace('https', 'wss')}/realtime/v1/websocket?apikey=${SUPABASE_ANON_KEY}&vsn=1.0.0`;
-    ws.connect(url, {}, function(socket) {
-      socket.on('open', () => socket.send('ping'));
-      socket.on('message', (data) => socket.close());
-    });
-  });
-  */
 }
+
