@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS habits (
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
   title TEXT NOT NULL CHECK (char_length(title) <= 100),
   streak INTEGER DEFAULT 0,
+  last_completed_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -319,3 +320,44 @@ BEGIN
   ORDER BY rm.date DESC;
 END;
 $$;
+
+
+-- RPC for optimized dashboard metrics fetch
+CREATE OR REPLACE FUNCTION get_dashboard_metrics()
+RETURNS JSON AS $$
+DECLARE
+    result JSON;
+    v_user_id UUID;
+BEGIN
+    v_user_id := auth.uid();
+    
+    WITH mood_val AS (
+        SELECT mood_score 
+        FROM mood_logs 
+        WHERE user_id = v_user_id 
+        ORDER BY timestamp DESC 
+        LIMIT 1
+    ),
+    habit_counts AS (
+        SELECT 
+            COUNT(*)::INTEGER as habits_total
+        FROM habits 
+        WHERE user_id = v_user_id
+    ),
+    habit_completions AS (
+        SELECT 
+            COUNT(DISTINCT habit_id)::INTEGER as habits_completed
+        FROM habit_logs 
+        WHERE user_id = v_user_id 
+        AND status = 'completed'
+        AND created_at >= (CURRENT_DATE AT TIME ZONE 'UTC')
+    )
+    SELECT json_build_object(
+        'mood', (SELECT mood_score FROM mood_val),
+        'habits_total', (SELECT habits_total FROM habit_counts),
+        'habits_completed', (SELECT habits_completed FROM habit_completions)
+    ) INTO result;
+    
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

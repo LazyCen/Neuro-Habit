@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, Alert, Pressable } from "react-native";
+import { TouchableOpacity } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
@@ -8,12 +9,13 @@ import { backendService } from "../services/backendService";
 import { notificationService } from "../services/notificationService";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, withSequence } from "react-native-reanimated";
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withSequence, withTiming } from "react-native-reanimated";
 import PremiumBackground from "../components/PremiumBackground";
 import { supabase } from "../services/supabaseClient";
 import AppMessageModal from "../components/AppMessageModal";
 import * as Haptics from 'expo-haptics';
 import { getFriendlyErrorMessage } from "../utils/errorMapper";
+import Swipeable from "react-native-gesture-handler/Swipeable";
 
 const LOCAL_HABITS_KEY = "local_habits_v1";
 const HABIT_META_KEY = "habit_meta_v2";
@@ -23,7 +25,16 @@ export default function HabitScreen() {
   const { session } = useAuth();
   const [habits, setHabits] = useState([]);
   const [newHabit, setNewHabit] = useState("");
-  const [modalConfig, setModalConfig] = useState({ visible: false, title: "", message: "" });
+  const [modalConfig, setModalConfig] = useState({ 
+    visible: false, 
+    title: "", 
+    message: "", 
+    confirmText: "OK",
+    cancelText: null,
+    onConfirm: () => {},
+    onCancel: () => {},
+    destructive: false 
+  });
   const themedStyles = styles(colors);
 
   // Per-habit debounce timers and in-flight abort controllers to prevent race conditions
@@ -115,7 +126,7 @@ export default function HabitScreen() {
         }
       }
 
-      if (meta.streak !== streak || meta.lastCompletedAt !== lastCompletedAt) {
+      if (!meta || meta.streak !== streak || meta.lastCompletedAt !== lastCompletedAt) {
         metaMap[habit.id] = { ...meta, streak, lastCompletedAt };
         metaChanged = true;
       }
@@ -341,12 +352,14 @@ export default function HabitScreen() {
         visible: true,
         title: "Guest Mode Limitation",
         message: "Sign in with an account to add habits.",
+        confirmText: "OK",
+        onConfirm: () => setModalConfig(prev => ({ ...prev, visible: false }))
       });
       return;
     }
 
     const result = await backendService.createHabit(newHabit);
-    if (result && !result.error) {
+    if (result && !result.error && result.status !== "error") {
       await loadHabits();
       setNewHabit("");
     } else {
@@ -373,8 +386,43 @@ export default function HabitScreen() {
         visible: true,
         title: "Saved Locally",
         message: `${friendlyError}\n\nHabit was added on this device. Sign in/sync later to back it up online.`,
+        confirmText: "OK",
+        onConfirm: () => setModalConfig(prev => ({ ...prev, visible: false }))
       });
     }
+  };
+
+  const deleteHabit = (id) => {
+    setModalConfig({
+      visible: true,
+      title: "Delete Habit",
+      message: "Are you sure you want to delete this habit? This action cannot be undone.",
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      destructive: true,
+      onCancel: () => setModalConfig(prev => ({ ...prev, visible: false })),
+      onConfirm: async () => {
+        setModalConfig(prev => ({ ...prev, visible: false }));
+        // Optimistic update
+        setHabits(prev => prev.filter(h => h.id !== id));
+        
+        const isLocal = id.toString().startsWith('local-');
+        
+        if (isLocal) {
+           const localHabits = await getLocalHabits();
+           await setLocalHabits(localHabits.filter(h => h.id !== id));
+        } else {
+           // Explicitly delete associated logs first
+           await supabase.from('habit_logs').delete().eq('habit_id', id);
+
+           const { error } = await supabase.from('habits').delete().eq('id', id);
+           if (error) {
+             console.error("Error deleting habit:", error);
+             loadHabits(); // Restore state if failed
+           }
+        }
+      }
+    });
   };
 
   return (
@@ -384,7 +432,11 @@ export default function HabitScreen() {
         visible={modalConfig.visible}
         title={modalConfig.title}
         message={modalConfig.message}
-        onConfirm={() => setModalConfig({ visible: false, title: "", message: "" })}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+        destructive={modalConfig.destructive}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={modalConfig.onCancel}
       />
       <View style={themedStyles.container}>
         <Text style={themedStyles.title}>Habit Tracking</Text>
@@ -404,7 +456,7 @@ export default function HabitScreen() {
 
         <FlatList
           data={habits}
-          renderItem={({ item }) => <HabitItem item={item} onToggle={toggleHabit} colors={colors} />}
+          renderItem={({ item }) => <HabitItem item={item} onToggle={toggleHabit} onDelete={deleteHabit} colors={colors} />}
           keyExtractor={item => item.id}
           contentContainerStyle={themedStyles.list}
           ListEmptyComponent={
@@ -420,12 +472,14 @@ export default function HabitScreen() {
   );
 }
 
-function HabitItem({ item, onToggle, colors }) {
+function HabitItem({ item, onToggle, onDelete, colors }) {
   const themedStyles = styles(colors);
   const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
+    opacity: opacity.value,
   }));
 
   const handlePress = () => {
@@ -434,25 +488,54 @@ function HabitItem({ item, onToggle, colors }) {
     onToggle(item.id);
   };
 
+  const handlePressIn = () => {
+    opacity.value = withTiming(0.8, { duration: 100 });
+  };
+
+  const handlePressOut = () => {
+    opacity.value = withTiming(1, { duration: 100 });
+  };
+
+  const renderRightActions = () => {
+    return (
+      <TouchableOpacity 
+        style={themedStyles.deleteAction} 
+        onPress={() => onDelete(item.id)}
+      >
+        <Ionicons name="trash-outline" size={24} color={colors.danger} />
+      </TouchableOpacity>
+    );
+  };
+
   return (
-    <TouchableOpacity onPress={handlePress}>
-      <Animated.View style={animatedStyle}>
-        <Card style={[themedStyles.habitItem, item.completed && themedStyles.habitCompleted]}>
-          <View style={themedStyles.habitInfo}>
-            <Ionicons 
-              name={item.completed ? "checkmark-circle" : "ellipse-outline"} 
-              size={28} 
-              color={item.completed ? colors.green : colors.subtext} 
-            />
-            <View style={themedStyles.habitTextContainer}>
-              <Text style={[themedStyles.habitName, item.completed && themedStyles.textCompleted]}>{item.name}</Text>
-              <Text style={themedStyles.streakText}>🔥 {item.streak} day streak</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
-        </Card>
-      </Animated.View>
-    </TouchableOpacity>
+    <View style={{ marginBottom: 12 }}>
+      <Swipeable renderRightActions={renderRightActions} overshootRight={false}>
+        <Pressable 
+          onPress={handlePress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          android_ripple={null}
+          style={{ borderRadius: 24, overflow: 'hidden' }}
+        >
+          <Animated.View style={[animatedStyle, { backgroundColor: 'transparent' }]}>
+            <Card style={[themedStyles.habitItem, item.completed && themedStyles.habitCompleted, { marginBottom: 0 }]}>
+              <View style={[themedStyles.habitInfo, { backgroundColor: 'transparent' }]}>
+                <Ionicons 
+                  name={item.completed ? "checkmark-circle" : "ellipse-outline"} 
+                  size={28} 
+                  color={item.completed ? colors.green : colors.subtext} 
+                />
+                <View style={[themedStyles.habitTextContainer, { backgroundColor: 'transparent' }]}>
+                  <Text style={[themedStyles.habitName, item.completed && themedStyles.textCompleted, { backgroundColor: 'transparent' }]}>{item.name}</Text>
+                  <Text style={[themedStyles.streakText, { backgroundColor: 'transparent' }]}>🔥 {item.streak} day streak</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
+            </Card>
+          </Animated.View>
+        </Pressable>
+      </Swipeable>
+    </View>
   );
 }
 
@@ -520,11 +603,9 @@ const styles = (colors) => StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     padding: 16,
-    marginBottom: 12,
   },
   habitCompleted: {
     borderColor: colors.green + "40",
-    backgroundColor: colors.green + "08",
   },
   habitInfo: {
     flexDirection: "row",
@@ -532,6 +613,7 @@ const styles = (colors) => StyleSheet.create({
   },
   habitTextContainer: {
     marginLeft: 16,
+    backgroundColor: 'transparent',
   },
   habitName: {
     fontSize: 18,
@@ -547,5 +629,16 @@ const styles = (colors) => StyleSheet.create({
     color: colors.primary,
     marginTop: 2,
     fontWeight: "bold",
+  },
+  deleteAction: {
+    backgroundColor: colors.danger + "15", // Subtle glassmorphism red
+    justifyContent: "center",
+    alignItems: "center",
+    width: 70,
+    height: '100%',
+    borderRadius: 24,
+    marginLeft: 12,
+    borderWidth: 1,
+    borderColor: colors.danger + "30",
   },
 });

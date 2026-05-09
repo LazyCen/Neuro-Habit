@@ -46,52 +46,60 @@ const createStyles = (colors) =>
   StyleSheet.create({
     overlay: {
       flex: 1,
-      backgroundColor: colors.cardHighlight, // Replaced rgba(0,0,0,0.45) with theme token
+      backgroundColor: "rgba(0, 0, 0, 0.75)", // Darker backdrop for better focus and theme balance
       justifyContent: "center",
       padding: 24,
     },
     card: {
       backgroundColor: colors.card,
-      borderRadius: 16,
-      padding: 18,
+      borderRadius: 24, // Smoother corners for premium feel
+      padding: 24,
       borderWidth: 1,
       borderColor: colors.border,
+      // Add subtle shadow for depth
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.3,
+      shadowRadius: 20,
+      elevation: 10,
     },
     title: {
       color: colors.text,
-      fontSize: 18,
+      fontSize: 22, // Slightly larger title
       fontWeight: "800",
-      marginBottom: 8,
+      marginBottom: 12,
+      letterSpacing: 0.5,
     },
     message: {
       color: colors.subtext,
-      fontSize: 14,
-      lineHeight: 20,
-      marginBottom: 16,
+      fontSize: 16, // Better readability
+      lineHeight: 24,
+      marginBottom: 24,
     },
     actions: {
       flexDirection: "row",
       justifyContent: "flex-end",
-      gap: 10,
+      gap: 12,
     },
     cancelButton: {
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 10,
-      paddingHorizontal: 14,
-      paddingVertical: 9,
-      backgroundColor: colors.background,
+      borderRadius: 12,
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      backgroundColor: "rgba(255, 255, 255, 0.05)",
     },
     cancelText: {
-      color: colors.text,
+      color: colors.subtext, // Use subtext color for secondary action
       fontWeight: "600",
+      fontSize: 15,
     },
     confirmButton: {
-      borderRadius: 10,
-      paddingHorizontal: 14,
-      paddingVertical: 9,
+      borderRadius: 12,
+      paddingHorizontal: 24,
+      paddingVertical: 12,
       backgroundColor: colors.primary,
-      minWidth: 88,
+      minWidth: 100,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -101,5 +109,6 @@ const createStyles = (colors) =>
     confirmText: {
       color: colors.white,
       fontWeight: "700",
+      fontSize: 15,
     },
   });

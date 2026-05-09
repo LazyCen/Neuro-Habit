@@ -16,8 +16,16 @@ export default function SettingsScreen() {
   const { signOut, session } = useAuth();
   const [savingProfile, setSavingProfile] = React.useState(false);
   const [deletingAccount, setDeletingAccount] = React.useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
-  const [messageModal, setMessageModal] = React.useState({ visible: false, title: "", message: "" });
+  const [messageModal, setMessageModal] = React.useState({ 
+    visible: false, 
+    title: "", 
+    message: "",
+    confirmText: "OK",
+    cancelText: null,
+    onConfirm: () => {},
+    onCancel: () => {},
+    destructive: false
+  });
   const [showProfileScreen, setShowProfileScreen] = React.useState(false);
   const [firstName, setFirstName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
@@ -43,7 +51,7 @@ export default function SettingsScreen() {
 
   const handleSaveProfile = async () => {
     if (isGuest) {
-      setMessageModal({ visible: true, title: "Guest Mode", message: "Sign in with an account to edit your profile." });
+      setMessageModal({ visible: true, title: "Guest Mode", message: "Sign in with an account to edit your profile.", confirmText: "OK", onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false })) });
       return;
     }
 
@@ -54,7 +62,7 @@ export default function SettingsScreen() {
       const trimmedUsername = username.trim();
 
       if (!trimmedUsername && !trimmedFirst) {
-        setMessageModal({ visible: true, title: "Missing Info", message: "Add at least a username or first name." });
+        setMessageModal({ visible: true, title: "Missing Info", message: "Add at least a username or first name.", confirmText: "OK", onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false })) });
         return;
       }
 
@@ -68,10 +76,10 @@ export default function SettingsScreen() {
       });
 
       if (error) throw error;
-      setMessageModal({ visible: true, title: "Profile Updated", message: "Your account profile was saved." });
+      setMessageModal({ visible: true, title: "Profile Updated", message: "Your account profile was saved.", confirmText: "OK", onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false })) });
       setShowProfileScreen(false);
     } catch (error) {
-      setMessageModal({ visible: true, title: "Update Failed", message: error?.message || "Unable to save profile." });
+      setMessageModal({ visible: true, title: "Update Failed", message: error?.message || "Unable to save profile.", confirmText: "OK", onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false })) });
     } finally {
       setSavingProfile(false);
     }
@@ -85,24 +93,20 @@ export default function SettingsScreen() {
         visible: true,
         title: "Cache Cleared",
         message: "Your local data cache and offline sync queues have been purged successfully.",
+        confirmText: "OK",
+        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
       });
     } catch (error) {
       setMessageModal({
         visible: true,
         title: "Clear Failed",
         message: error?.message || "Unable to clear local cache at this time.",
+        confirmText: "OK",
+        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
       });
     } finally {
       setClearingCache(false);
     }
-  };
-
-  const handleDeleteAccount = async () => {
-    if (isGuest) {
-      setMessageModal({ visible: true, title: "Guest Mode", message: "There is no registered account to delete." });
-      return;
-    }
-    setShowDeleteConfirm(true);
   };
 
   const confirmDeleteAccount = async () => {
@@ -113,14 +117,50 @@ export default function SettingsScreen() {
 
       await backendService.deleteAccount();
 
-      setShowDeleteConfirm(false);
+      setMessageModal(prev => ({ ...prev, visible: false }));
       await signOut(true);
-      setMessageModal({ visible: true, title: "Account Deleted", message: "Your app data was removed and you have been signed out." });
+      setMessageModal({ 
+        visible: true, 
+        title: "Account Deleted", 
+        message: "Your app data was removed and you have been signed out.",
+        confirmText: "OK",
+        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
+      });
     } catch (error) {
-      setMessageModal({ visible: true, title: "Delete Failed", message: error?.message || "Unable to delete account right now." });
+      setMessageModal({ 
+        visible: true, 
+        title: "Delete Failed", 
+        message: error?.message || "Unable to delete account right now.",
+        confirmText: "OK",
+        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
+      });
     } finally {
       setDeletingAccount(false);
     }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (isGuest) {
+      setMessageModal({ 
+        visible: true, 
+        title: "Guest Mode", 
+        message: "There is no registered account to delete.",
+        confirmText: "OK",
+        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
+      });
+      return;
+    }
+    
+    setMessageModal({
+      visible: true,
+      title: "Delete Account Permanently?",
+      message: "If you continue, your habits, moods, metrics, and insights will be deleted and cannot be recovered.",
+      confirmText: "Yes, Delete",
+      cancelText: "Cancel",
+      destructive: true,
+      onCancel: () => setMessageModal(prev => ({ ...prev, visible: false })),
+      onConfirm: confirmDeleteAccount
+    });
   };
 
   const renderModals = () => (
@@ -129,43 +169,12 @@ export default function SettingsScreen() {
         visible={messageModal.visible}
         title={messageModal.title}
         message={messageModal.message}
-        onConfirm={() => setMessageModal({ visible: false, title: "", message: "" })}
+        confirmText={messageModal.confirmText}
+        cancelText={messageModal.cancelText}
+        destructive={messageModal.destructive}
+        onConfirm={messageModal.onConfirm}
+        onCancel={messageModal.onCancel}
       />
-      <Modal
-        visible={showDeleteConfirm}
-        transparent
-        animationType="fade"
-        onRequestClose={() => !deletingAccount && setShowDeleteConfirm(false)}
-      >
-        <View style={themedStyles.modalOverlay}>
-          <View style={themedStyles.modalCard}>
-            <Text style={themedStyles.modalTitle}>Delete Account Permanently?</Text>
-            <Text style={themedStyles.modalText}>
-              If you continue, your habits, moods, metrics, and insights will be deleted and cannot be recovered.
-            </Text>
-            <View style={themedStyles.modalActions}>
-              <TouchableOpacity
-                style={themedStyles.modalCancelButton}
-                onPress={() => setShowDeleteConfirm(false)}
-                disabled={deletingAccount}
-              >
-                <Text style={themedStyles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={themedStyles.modalDeleteButton}
-                onPress={confirmDeleteAccount}
-                disabled={deletingAccount}
-              >
-                {deletingAccount ? (
-                  <ActivityIndicator color={colors.white} />
-                ) : (
-                  <Text style={themedStyles.modalDeleteText}>Yes, Delete</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </>
   );
 
@@ -250,16 +259,9 @@ export default function SettingsScreen() {
             <TouchableOpacity
               style={themedStyles.deleteButton}
               onPress={handleDeleteAccount}
-              disabled={deletingAccount}
             >
-              {deletingAccount ? (
-                <ActivityIndicator color={colors.white} />
-              ) : (
-                <>
-                   <Ionicons name="trash" size={16} color={colors.white} />
-                   <Text style={themedStyles.deleteButtonText}>Delete Account and Data</Text>
-                </>
-              )}
+              <Ionicons name="trash" size={16} color={colors.white} />
+              <Text style={themedStyles.deleteButtonText}>Delete Account and Data</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -286,8 +288,6 @@ export default function SettingsScreen() {
 
         <View style={themedStyles.section}>
           <Text style={themedStyles.sectionTitle}>Preferences</Text>
-
-
 
           <View style={themedStyles.settingRow}>
             <View style={themedStyles.settingLeft}>
@@ -481,9 +481,6 @@ const styles = (colors) => StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
   },
-  editBox: {
-    marginTop: 8,
-  },
   inputRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -586,61 +583,6 @@ const styles = (colors) => StyleSheet.create({
     color: colors.white,
     fontWeight: "700",
     fontSize: 14,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: colors.cardHighlight,
-    justifyContent: "center",
-    padding: 24,
-  },
-  modalCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modalTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "800",
-    marginBottom: 8,
-  },
-  modalText: {
-    color: colors.subtext,
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 10,
-  },
-  modalCancelButton: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    backgroundColor: colors.background,
-  },
-  modalCancelText: {
-    color: colors.text,
-    fontWeight: "600",
-  },
-  modalDeleteButton: {
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    backgroundColor: colors.danger,
-    minWidth: 104,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalDeleteText: {
-    color: colors.white,
-    fontWeight: "700",
   },
   footer: {
     marginTop: 8,

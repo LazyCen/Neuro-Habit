@@ -144,15 +144,29 @@ async function readHCStepsOnce(client, startOfDay, now) {
           endTime:   now.toISOString(),
         },
       }));
-      const count = aggregate?.count ?? aggregate?.steps ?? 0;
-      if (Number.isFinite(count)) return { value: count, method: 'aggregate' };
+      
+      console.log('[Steps] HC aggregate raw:', JSON.stringify(aggregate));
+      
+      // Try multiple common result keys used by different versions/providers
+      const count = aggregate?.count ?? 
+                    aggregate?.steps ?? 
+                    aggregate?.['steps.count'] ?? 
+                    aggregate?.totalSteps ?? 
+                    0;
+
+      if (Number.isFinite(count) && count > 0) {
+        return { value: count, method: 'aggregate' };
+      }
+      
+      // If aggregate returned 0, it might be an empty bucket or a sync delay.
+      // We'll proceed to Attempt B just in case.
     } catch (e) {
-      if (e.isBindingError) throw e; // propagate to caller
+      if (e.isBindingError) throw e; 
       console.warn('[Steps] HC aggregateRecord non-binding error:', e.message);
     }
   }
 
-  // Attempt B: readRecords
+  // Attempt B: readRecords (fallback if aggregate is 0 or missing)
   if (typeof client.readRecords === 'function') {
     try {
       const result = await safeNativeCall(() => client.readRecords('Steps', {
@@ -167,7 +181,10 @@ async function readHCStepsOnce(client, startOfDay, now) {
         const v = r?.count ?? r?.steps ?? 0;
         return sum + (Number.isFinite(v) ? v : 0);
       }, 0);
-      return { value: total, method: 'readRecords' };
+      
+      if (total > 0) {
+        return { value: total, method: 'readRecords' };
+      }
     } catch (e) {
       if (e.isBindingError) throw e;
       console.warn('[Steps] HC readRecords non-binding error:', e.message);
@@ -511,10 +528,21 @@ export const usageService = {
           try {
             const { value, method } = await readHCStepsOnce(client, startOfDay, now);
             if (Number.isFinite(value)) {
-              console.log(`[Steps] HC ${method} success: ${value}`);
-              // Save as today's base so live delta stays meaningful
-              await saveBaseStepCount(value);
-              return value;
+              console.log(`[Steps] HC ${method} result: ${value}`);
+              
+              if (value > 0) {
+                // Save as today's base so live delta stays meaningful
+                await saveBaseStepCount(value);
+                return value;
+              } else {
+                console.log('[Steps] HC returned 0. Verifying native permissions...');
+                // If we get 0, double check if it's because permissions were revoked
+                const stillAuthorized = await this.hasStepPermission(true);
+                if (!stillAuthorized) {
+                  console.warn('[Steps] HC permissions revoked! Disabling for this session.');
+                  isHealthConnectEnabled = false;
+                }
+              }
             }
           } catch (e) {
             if (e.isBindingError) {
@@ -606,6 +634,27 @@ export const usageService = {
   stopWatchingLiveSteps(subscription) {
     if (subscription && typeof subscription.remove === 'function') {
       subscription.remove();
+    }
+  },
+
+  async openHealthConnect() {
+    if (Platform.OS !== 'android') return;
+    const client = await getHealthConnectClient();
+    if (client && typeof client.openHealthConnectSettings === 'function') {
+      try {
+        await client.openHealthConnectSettings();
+        return;
+      } catch (e) {
+        console.warn('[usageService] Failed to open HC settings via SDK:', e.message);
+      }
+    }
+    
+    // Fallback: Try to open via intent
+    try {
+      await Linking.sendIntent('androidx.health.ACTION_HEALTH_CONNECT_SETTINGS');
+    } catch (e) {
+      // Final fallback: just open app settings
+      Linking.openSettings();
     }
   },
 };

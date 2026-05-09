@@ -35,8 +35,8 @@ export default function DashboardScreen() {
   const [usernameLoading, setUsernameLoading] = React.useState(false);
   const [showHealthModal, setShowHealthModal] = React.useState(false);
   const [permissionTypeToRequest, setPermissionTypeToRequest] = React.useState(null);
-  const lastRefreshRef = React.useRef(Date.now());
-  const REFRESH_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+  const lastRefreshRef = React.useRef(0);
+  const REFRESH_THROTTLE_MS = 1000; // 1 second throttle for real-time updates on focus
 
   const handleRefresh = React.useCallback(() => {
     refresh();
@@ -109,11 +109,7 @@ export default function DashboardScreen() {
   useFocusEffect(
     React.useCallback(() => {
       checkPermissions();
-      
-      const now = Date.now();
-      if (now - lastRefreshRef.current > REFRESH_THROTTLE_MS) {
-        handleRefresh();
-      }
+      handleRefresh();
     }, [handleRefresh])
   );
 
@@ -263,6 +259,13 @@ export default function DashboardScreen() {
     return "Good evening";
   };
 
+  const formatScreenTime = (hoursFloat) => {
+    const totalMinutes = Math.round((hoursFloat || 0) * 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    return `${hours}h:${mins.toString().padStart(2, '0')}m`;
+  };
+
   return (
     <SafeAreaView style={themedStyles.safeArea}>
       <PremiumBackground />
@@ -384,9 +387,31 @@ export default function DashboardScreen() {
               {data.steps > 0 ? 'Steps today' : liveSteps > 0 ? 'Steps (live)' : 'Steps today'}
             </Text>
             {liveSteps > 0 && data.steps === 0 && (
-              <Text style={{ color: colors.subtext, fontSize: 11, marginTop: 4 }}>
-                Live tracking active — historical sync unavailable
-              </Text>
+              <View style={{ marginTop: 8 }}>
+                <Text style={{ color: colors.subtext, fontSize: 11 }}>
+                  Live tracking active — historical sync unavailable
+                </Text>
+                <TouchableOpacity 
+                  onPress={() => usageService.openHealthConnect()}
+                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+                >
+                  <Text style={{ color: colors.primary, fontSize: 11, fontWeight: 'bold' }}>
+                    Troubleshoot Sync
+                  </Text>
+                  <Ionicons name="chevron-forward" size={10} color={colors.primary} style={{ marginLeft: 2 }} />
+                </TouchableOpacity>
+              </View>
+            )}
+            {data.steps === 0 && liveSteps === 0 && (
+              <TouchableOpacity 
+                onPress={() => usageService.openHealthConnect()}
+                style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }}
+              >
+                <Ionicons name="help-circle-outline" size={14} color={colors.subtext} />
+                <Text style={{ color: colors.subtext, fontSize: 11, marginLeft: 4 }}>
+                  Why is this 0? Check Health Connect
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
           </Card>
@@ -398,14 +423,26 @@ export default function DashboardScreen() {
           <Animated.View entering={FadeInUp.delay(600)} style={themedStyles.halfCardWrapper}>
             <Card style={themedStyles.halfCard}>
               <Ionicons name="phone-portrait-outline" size={28} color={colors.primary} style={themedStyles.icon} />
-              <Text style={themedStyles.statValue}>{data.screenTime}h</Text>
+              <Text 
+                style={themedStyles.statValue} 
+                numberOfLines={1} 
+                adjustsFontSizeToFit
+              >
+                {formatScreenTime(data.screenTime)}
+              </Text>
               <Text style={themedStyles.statLabel}>Screen Time</Text>
             </Card>
           </Animated.View>
           <Animated.View entering={FadeInUp.delay(700)} style={themedStyles.halfCardWrapper}>
             <Card style={themedStyles.halfCard}>
               <Ionicons name="happy-outline" size={28} color={colors.secondary} style={themedStyles.icon} />
-              <Text style={themedStyles.statValue}>{data.mood != null ? `${data.mood}/10` : '--'}</Text>
+              <Text 
+                style={themedStyles.statValue}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {data.mood != null ? `${data.mood}/10` : '--'}
+              </Text>
               <Text style={themedStyles.statLabel}>Mood Score</Text>
             </Card>
           </Animated.View>
@@ -552,14 +589,14 @@ const styles = (colors) => StyleSheet.create({
   halfCard: {
     width: "100%",
     alignItems: "center",
-    padding: 24,
+    padding: 20,
   },
   icon: {
     marginBottom: 12,
   },
   statValue: {
     color: colors.text,
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "bold",
     marginBottom: 4,
   },
