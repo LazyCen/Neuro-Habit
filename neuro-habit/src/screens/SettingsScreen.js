@@ -280,9 +280,16 @@ export default function SettingsScreen() {
           <View style={themedStyles.avatarLarge}>
             <Text style={themedStyles.avatarEmoji}>{avatarEmoji}</Text>
           </View>
-          <View>
-            <Text style={themedStyles.userName}>{displayName}</Text>
-            <Text style={themedStyles.userEmail}>{session?.user?.email || "guest@example.com"}</Text>
+          <View style={themedStyles.profileTextContainer}>
+            <Text 
+              style={themedStyles.userName}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {displayName}
+            </Text>
+            <Text style={themedStyles.userEmail} numberOfLines={1}>{session?.user?.email || "guest@example.com"}</Text>
           </View>
         </View>
 
@@ -390,6 +397,9 @@ const styles = (colors) => StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  profileTextContainer: {
+    flex: 1,
   },
   avatarLarge: {
     width: 70,

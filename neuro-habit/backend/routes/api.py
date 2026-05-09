@@ -143,40 +143,53 @@ async def update_metrics_bulk(request: Request, metrics_list: List[DailyMetrics]
 @router.delete("/account")
 @limiter.limit(LIMIT_WRITE)
 async def delete_account(request: Request, user=Depends(get_current_user), admin: Client = Depends(get_admin_client)):
-    user_id = user.id
+    """
+    Permanently deletes a user account and all associated data.
+    Uses a two-stage process:
+    1. Database RPC to wipe all public schema data atomically.
+    2. GoTrue Admin API to delete the authentication record.
+    """
+    user_id = str(user.id)
 
     @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=6),
         reraise=True
     )
-    def _delete_auth_user_resiliently():
-        # Deleting the auth user will trigger ON DELETE CASCADE for all associated data 
-        # in the public schema (profiles, habits, logs, etc.) defined in schema.sql.
-        # This ensures the operation is atomic from the database's perspective.
-        return admin.auth.admin.delete_user(user_id)
+    def _delete_auth_user_resiliently(uid: str):
+        return admin.auth.admin.delete_user(uid)
 
     try:
-        # First, mark the user as 'deleting' in metadata. This signals intent and 
-        # can be used to prevent certain operations if the deletion takes time.
-        admin.auth.admin.update_user_by_id(
-            user_id, 
-            {"user_metadata": {"account_delete_requested": True}}
-        )
+        # Stage 1: Wipe all application data using the atomic RPC defined in schema.sql.
+        # This ensures that even if auth deletion fails, the user's private data is gone.
+        # It also bypasses potential issues with cross-schema CASCADE deletes.
+        print(f"Initiating data wipe for user: {user_id}")
+        rpc_res = admin.rpc("delete_user_account", {"p_user_id": user_id}).execute()
+        
+        # Check if RPC succeeded (it returns VOID, but we check for execution errors)
+        if hasattr(rpc_res, 'error') and rpc_res.error:
+             print(f"RPC Error during deletion: {rpc_res.error}")
+             raise Exception(f"Database wipe failed: {rpc_res.error.message}")
 
-        # Execute auth deletion with retry logic. 
-        # We no longer call the manual 'delete_user_account' RPC because the 
-        # database-level foreign key cascades handle it more reliably and atomically.
-        _delete_auth_user_resiliently()
+        # Stage 2: Remove the user from Supabase Auth.
+        print(f"Deleting auth record for user: {user_id}")
+        _delete_auth_user_resiliently(user_id)
         
         return {"status": "success", "message": "Account and all associated data deleted successfully."}
     except Exception as exc:
-        print(f"Error during resilient account deletion for user {user_id}: {str(exc)}")
-        # If we reach here, the user still exists and their data is intact (because we didn't wipe it first).
-        # This avoids the 'zombie user' state.
+        err_msg = str(exc)
+        print(f"CRITICAL ERROR during account deletion for user {user_id}: {err_msg}")
+        
+        # Provide specific guidance for the common 'placeholder key' issue
+        if "your-service-role-key-here" in err_msg or "invalid" in err_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail="Delete Failed: The server's SUPABASE_SERVICE_ROLE_KEY is not configured correctly. Please check the backend .env file."
+            )
+            
         raise HTTPException(
             status_code=500, 
-            detail="A critical error occurred during account deletion. Your data is safe. Please try again later or contact support."
+            detail=f"Delete Failed: {err_msg if 'wipe failed' in err_msg else 'Internal server error during deletion. Please try again.'}"
         )
 
 

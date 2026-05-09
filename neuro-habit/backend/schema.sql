@@ -10,10 +10,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Profiles Table
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
-  first_name TEXT CHECK (char_length(first_name) <= 100),
-  middle_name TEXT CHECK (char_length(middle_name) <= 100),
-  last_name TEXT CHECK (char_length(last_name) <= 100),
-  avatar_url TEXT CHECK (char_length(avatar_url) <= 500),
+  first_name TEXT CHECK (char_length(first_name) <= 255),
+  middle_name TEXT CHECK (char_length(middle_name) <= 255),
+  last_name TEXT CHECK (char_length(last_name) <= 255),
+  avatar_url TEXT CHECK (char_length(avatar_url) <= 1024),
   goals JSONB,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -114,13 +114,18 @@ BEGIN
   INSERT INTO public.profiles (id, first_name, middle_name, last_name)
   VALUES (
     NEW.id,
-    NEW.raw_user_meta_data->>'first_name',
-    NEW.raw_user_meta_data->>'middle_name',
-    NEW.raw_user_meta_data->>'last_name'
-  );
+    COALESCE(NEW.raw_user_meta_data->>'first_name', ''),
+    COALESCE(NEW.raw_user_meta_data->>'middle_name', ''),
+    COALESCE(NEW.raw_user_meta_data->>'last_name', '')
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    first_name = EXCLUDED.first_name,
+    middle_name = EXCLUDED.middle_name,
+    last_name = EXCLUDED.last_name,
+    updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users

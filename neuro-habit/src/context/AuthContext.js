@@ -164,7 +164,10 @@ export const AuthProvider = ({ children }) => {
       if (data.session) setSession(data.session);
       return { data, error: null };
     } catch (error) {
-      console.error('AuthContext: SignUp error:', error.message);
+      console.error('AuthContext: SignUp error:', error);
+      if (error.message === 'Database error saving new user') {
+        console.error('AuthContext: This typically means a trigger on auth.users failed. Check your Supabase logs or schema.sql trigger.');
+      }
       return { data: null, error };
     }
   };

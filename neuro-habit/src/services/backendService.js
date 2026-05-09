@@ -150,9 +150,17 @@ async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
 
     const response = await fetchWithTimeout(`${baseUrl}${path}`, updatedOptions, timeoutMs);
     if (!response.ok) {
-      // Attach the HTTP status so callers can distinguish permanent (4xx) from
-      // transient (5xx / network) failures without re-parsing error messages.
-      const err = new Error(`Request failed (${response.status}) at ${baseUrl}${path}`);
+      let errorMessage = `Request failed (${response.status}) at ${baseUrl}${path}`;
+      try {
+        const errorData = await response.json();
+        if (errorData && (errorData.detail || errorData.message)) {
+          errorMessage = errorData.detail || errorData.message;
+        }
+      } catch (e) {
+        // Fallback to default message if JSON parsing fails
+      }
+      
+      const err = new Error(errorMessage);
       err.status = response.status;
       err.isPermanent = response.status >= 400 && response.status < 500;
       throw err;

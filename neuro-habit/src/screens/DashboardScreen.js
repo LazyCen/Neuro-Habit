@@ -271,9 +271,16 @@ export default function DashboardScreen() {
       <PremiumBackground />
       <ScrollView style={themedStyles.container} contentContainerStyle={themedStyles.content}>
         <Animated.View entering={FadeInDown.duration(800)} style={themedStyles.header}>
-          <View>
+          <View style={themedStyles.headerTextContainer}>
             <Text style={themedStyles.greeting}>{getGreeting()},</Text>
-            <Text style={themedStyles.title}>{capitalizedName} 👋</Text>
+            <Text 
+              style={themedStyles.title}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.5}
+            >
+              {capitalizedName} 👋
+            </Text>
             {isOfflineMode && (
               <View style={[themedStyles.updatingBadge, { backgroundColor: colors.red + "18", borderColor: colors.red + "40" }]}>
                 <Ionicons name="cloud-offline" size={12} color={colors.red} />
@@ -502,6 +509,10 @@ const styles = (colors) => StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 30,
+  },
+  headerTextContainer: {
+    flex: 1,
+    marginRight: 16,
   },
   greeting: {
     color: colors.subtext,
