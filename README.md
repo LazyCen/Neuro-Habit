@@ -14,6 +14,10 @@ Neuro Habit is designed for students, professionals, workers, and anyone who wan
 - Smart Reminders: Stay accountable with timely notifications.
 - Health Integration: Sync data with Health Connect for a holistic view of wellness.
 
+## Inspiration
+
+This project is inspired by the book Neuro Habits Rewire Your Brain to Stop Self-Defeating Behaviors and Make the Right Choice Every Time author: Peter Hollins, with a focus on the idea that small repeated actions can create meaningful long-term behavioral change.
+
 ## Tech Stack
 
 - Frontend: React Native with Expo (Development Client)
@@ -48,14 +52,4 @@ Neuro Habit is designed for students, professionals, workers, and anyone who wan
 4. Set up environment variables:
    Create a .env file in the neuro-habit directory and add your Supabase and OpenAI credentials.
 
-### Running the App
 
-To start the development server:
-npm run start
-
-To run on an Android device/emulator:
-npm run android
-
-## Inspiration
-
-This project is inspired by the book Neuro Habits, with a focus on the idea that small repeated actions can create meaningful long-term behavioral change.
