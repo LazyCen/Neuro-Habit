@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Modal, Linking } from "react-native";
+import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
@@ -15,7 +15,7 @@ export default function SettingsScreen() {
   const { isDark, toggleTheme, theme: colors } = useTheme();
   const { signOut, session } = useAuth();
   const [savingProfile, setSavingProfile] = React.useState(false);
-  const [deletingAccount, setDeletingAccount] = React.useState(false);
+
   const [messageModal, setMessageModal] = React.useState({ 
     visible: false, 
     title: "", 
@@ -31,7 +31,7 @@ export default function SettingsScreen() {
   const [lastName, setLastName] = React.useState("");
   const [username, setUsername] = React.useState("");
   const [selectedAvatar, setSelectedAvatar] = React.useState("🐶");
-  const [clearingCache, setClearingCache] = React.useState(false);
+
 
   const themedStyles = styles(colors);
   const metadata = session?.user?.user_metadata || {};
@@ -47,7 +47,7 @@ export default function SettingsScreen() {
     setLastName(metadata?.last_name || "");
     setUsername(metadata?.username || "");
     setSelectedAvatar(metadata?.avatar_emoji || "🐶");
-  }, [session?.user?.id]);
+  }, [session?.user?.id, metadata?.first_name, metadata?.last_name, metadata?.username, metadata?.avatar_emoji]);
 
   const handleSaveProfile = async () => {
     if (isGuest) {
@@ -85,32 +85,9 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleClearCache = async () => {
-    setClearingCache(true);
-    try {
-      await backendService.purgeAllLocalData(true);
-      setMessageModal({
-        visible: true,
-        title: "Cache Cleared",
-        message: "Your local data cache and offline sync queues have been purged successfully.",
-        confirmText: "OK",
-        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
-      });
-    } catch (error) {
-      setMessageModal({
-        visible: true,
-        title: "Clear Failed",
-        message: error?.message || "Unable to clear local cache at this time.",
-        confirmText: "OK",
-        onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
-      });
-    } finally {
-      setClearingCache(false);
-    }
-  };
+
 
   const confirmDeleteAccount = async () => {
-    setDeletingAccount(true);
     try {
       const userId = session?.user?.id;
       if (!userId) throw new Error("No authenticated user.");
@@ -134,8 +111,6 @@ export default function SettingsScreen() {
         confirmText: "OK",
         onConfirm: () => setMessageModal(prev => ({ ...prev, visible: false }))
       });
-    } finally {
-      setDeletingAccount(false);
     }
   };
 

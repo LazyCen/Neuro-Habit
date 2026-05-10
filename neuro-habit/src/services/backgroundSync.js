@@ -2,6 +2,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import { usageService } from './usageService';
 import { backendService } from './backendService';
+import { syncHistoricalStepsToSupabase } from './api';
 
 const HEALTH_SYNC_TASK = 'HEALTH_SYNC_TASK';
 
@@ -13,6 +14,7 @@ TaskManager.defineTask(HEALTH_SYNC_TASK, async () => {
     
     if (steps > 0 || screenTime > 0) {
       await backendService.syncMetrics(steps, screenTime);
+      await syncHistoricalStepsToSupabase();
       console.log('[BackgroundSync] Successfully synced metrics');
       return BackgroundFetch.BackgroundFetchResult.NewData;
     }

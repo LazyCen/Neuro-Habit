@@ -13,11 +13,17 @@ const AdvancedChart = ({ data, colors }) => {
   const graphWidth = chartWidth - padding.left - padding.right;
   const graphHeight = chartHeight - padding.top - padding.bottom;
 
-  // Calculate max steps, with 10% headroom
+  // Default to a 1000 max (yielding 0, 200, 400, 600, 800, 1000). Only scale up if the user exceeds 1000.
   const rawMax = Math.max(...data.map(d => d.steps), 0);
-  const maxSteps = rawMax > 0 ? Math.ceil(rawMax * 1.1 / 1000) * 1000 : 5000;
+  const maxSteps = Math.max(1000, rawMax);
   
-  const yTicks = [0, maxSteps / 2, maxSteps];
+  const yTicks = [];
+  for (let i = 0; i < maxSteps; i += 200) {
+    yTicks.push(i);
+  }
+  if (!yTicks.includes(maxSteps)) {
+    yTicks.push(maxSteps);
+  }
 
   const barWidth = 18;
   const spacing = graphWidth / data.length;
@@ -111,8 +117,8 @@ const AdvancedChart = ({ data, colors }) => {
                 {d.day}
               </SvgText>
 
-              {/* Value on top (only for significant bars) */}
-              {barHeight > 30 && (
+              {/* Value on top */}
+              {d.steps > 0 && (
                 <SvgText
                   x={x}
                   y={y - 8}

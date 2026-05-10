@@ -1,9 +1,9 @@
 import React from "react";
 import { ScrollView, Text, View, StyleSheet, ActivityIndicator, TouchableOpacity, Linking, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeInDown, FadeInUp, FadeOut, useSharedValue, useAnimatedStyle, withTiming, withDelay } from "react-native-reanimated";
+import Animated, { FadeInDown, FadeInUp, useSharedValue, useAnimatedStyle, withTiming, withDelay } from "react-native-reanimated";
 import Card from "../components/Card";
 import HealthPermissionModal from "../components/HealthPermissionModal";
 import useDashboard from "../hooks/useDashboard";
@@ -19,7 +19,7 @@ export default function DashboardScreen() {
   const themedStyles = styles(colors);
   const { data, loading, isRefreshingData, isOfflineMode, refresh } = useDashboard();
   const { session } = useAuth();
-  const navigation = useNavigation();
+
   const [hasUsagePerm, setHasUsagePerm] = React.useState(true);
   const [hasPedometerPerm, setHasPedometerPerm] = React.useState(true);
   const [liveSteps, setLiveSteps] = React.useState(0);
@@ -34,13 +34,19 @@ export default function DashboardScreen() {
   const [permissionLoading, setPermissionLoading] = React.useState(false);
   const [usernameLoading, setUsernameLoading] = React.useState(false);
   const [showHealthModal, setShowHealthModal] = React.useState(false);
-  const [permissionTypeToRequest, setPermissionTypeToRequest] = React.useState(null);
-  const lastRefreshRef = React.useRef(0);
-  const REFRESH_THROTTLE_MS = 1000; // 1 second throttle for real-time updates on focus
+
+  const [hcSdkStatus, setHcSdkStatus] = React.useState(null); // null=unknown, 1=not installed, 2=needs update, 3=available
+  // Initialise to Date.now() so the first useFocusEffect call is throttled —
+  // useDashboard already fires load() automatically on mount; we don't want a
+  // second identical fetch half a second later from useFocusEffect.
+  const lastRefreshRef = React.useRef(Date.now());
+  const REFRESH_THROTTLE_MS = 3000; // 3 s — prevents duplicate fetches during auth/navigation
 
   const handleRefresh = React.useCallback(() => {
+    const now = Date.now();
+    if (now - lastRefreshRef.current < REFRESH_THROTTLE_MS) return; // throttle guard
+    lastRefreshRef.current = now;
     refresh();
-    lastRefreshRef.current = Date.now();
   }, [refresh]);
 
   React.useEffect(() => {
@@ -52,7 +58,7 @@ export default function DashboardScreen() {
       badgeOpacity.value = withDelay(800, withTiming(0, { duration: 400 }));
       badgeTranslateY.value = withDelay(800, withTiming(-4, { duration: 400 }));
     }
-  }, [isRefreshingData]);
+  }, [isRefreshingData, badgeOpacity, badgeTranslateY]);
 
   const animatedBadgeStyle = useAnimatedStyle(() => {
     return {
@@ -87,8 +93,9 @@ export default function DashboardScreen() {
         } catch (_e) {}
 
         const sub = usageService.watchLiveSteps((stepsDelta) => {
-          // stepsDelta = steps since subscription started; add to today's baseline
-          setLiveSteps(baseline + stepsDelta);
+          // stepsDelta = base + live accumulator; filter out single-step sensor noise
+          const total = baseline + stepsDelta;
+          setLiveSteps(total >= 5 ? total : 0);
         });
         liveStepSubscriptionRef.current = sub;
       } catch (e) {
@@ -116,41 +123,15 @@ export default function DashboardScreen() {
   const checkPermissions = async () => {
     const usage = await usageService.hasPermission();
     const stepProviders = await usageService.getStepProviderStatus();
-    
+    const sdkStatus = await usageService.getHcSdkStatus();
+
     setHasUsagePerm(usage);
     setHasPedometerPerm(stepProviders.isAuthorized);
     setStepProviderStatus(stepProviders);
+    setHcSdkStatus(sdkStatus);
   };
 
-  const handleConnect = async (type) => {
-    setPermissionLoading(true);
-    try {
-      if (type === 'usage') {
-        await usageService.requestPermission();
-      } else if (type === 'health') {
-        const stepPermission = await usageService.requestStepPermissions();
-        if (!stepPermission.granted && !stepPermission.hasAnyProvider) {
-          if (Platform.OS === 'android') {
-            await Linking.openURL(
-              "https://play.google.com/store/search?q=Health%20Connect%20Google%20Fit&c=apps"
-            ).catch(() => {});
-          }
-          await usageService.requestPedometerPermission();
-        }
-      }
-      
-      // Re-check permissions after requesting
-      setTimeout(async () => {
-        await checkPermissions();
-        handleRefresh();
-      }, 500);
-    } catch (error) {
-      console.error('Error handling permission request:', error);
-      handleRefresh();
-    } finally {
-      setPermissionLoading(false);
-    }
-  };
+
 
   const handleConnectAll = async () => {
     setPermissionLoading(true);
@@ -187,7 +168,7 @@ export default function DashboardScreen() {
     setUsernameLoading(true);
     try {
       // Update user metadata to trigger navigation to UsernameScreen
-      const { data: { user }, error: updateError } = await supabase.auth.updateUser({
+      const { error: updateError } = await supabase.auth.updateUser({
         data: { username_skipped: false }
       });
       
@@ -470,6 +451,7 @@ export default function DashboardScreen() {
       </ScrollView>
       <HealthPermissionModal 
         visible={showHealthModal} 
+        hcSdkStatus={hcSdkStatus}
         onConfirm={() => {
           setShowHealthModal(false);
           handleConnectAll();

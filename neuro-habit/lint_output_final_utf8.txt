@@ -1,0 +1,83 @@
+﻿
+> neuro-habit@1.0.0 lint
+> expo lint --no-cache
+
+env: load .env
+env: export EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY EXPO_PUBLIC_API_URL
+
+C:\NeuroHabit\neuro-habit\src\components\AppMessageModal.js
+  47:14  warning  Color literal: { backgroundColor: 'rgba(0, 0, 0, 0.75)' }        react-native/no-color-literals
+  53:11  warning  Color literal: { shadowColor: '#000' }                           react-native/no-color-literals
+  84:19  warning  Color literal: { backgroundColor: 'rgba(255, 255, 255, 0.05)' }  react-native/no-color-literals
+
+C:\NeuroHabit\neuro-habit\src\components\HealthPermissionModal.js
+   49:56  error    `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+  155:14  warning  Color literal: { backgroundColor: 'rgba(0,0,0,0.6)' }            react-native/no-color-literals
+
+C:\NeuroHabit\neuro-habit\src\components\Preloader.js
+   12:10  warning  'Ionicons' is defined but never used                                                                                                                no-unused-vars
+   55:6   warning  React Hook useEffect has missing dependencies: 'glowPulse', 'opacity', 'pulse', and 'rotation'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  102:44  warning  Color literal: {
+  backgroundColor: "isDark ? theme.background : '#FFFFFF'",
+  borderColor: "isDark ? theme.primary + '4D' : 'transparent'"
+}       react-native/no-color-literals
+
+C:\NeuroHabit\neuro-habit\src\hooks\useDashboard.js
+  92:22  warning  'err' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+
+C:\NeuroHabit\neuro-habit\src\screens\AuthScreen.js
+    1:27  warning  'useEffect' is defined but never used                                     no-unused-vars
+   16:15  warning  'Path' is defined but never used                                          no-unused-vars
+   20:3   warning  'Layout' is defined but never used                                        no-unused-vars
+   21:3   warning  'SlideInRight' is defined but never used                                  no-unused-vars
+   25:3   warning  'interpolateColor' is defined but never used                              no-unused-vars
+  466:15  warning  Color literal: { backgroundColor: "isDark ? 'transparent' : '#FFFFFF'" }  react-native/no-color-literals
+
+C:\NeuroHabit\neuro-habit\src\screens\DashboardScreen.js
+  61:6  warning  React Hook React.useEffect has missing dependencies: 'badgeOpacity' and 'badgeTranslateY'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\NeuroHabit\neuro-habit\src\screens\HabitScreen.js
+    2:55   warning  'Alert' is defined but never used                                                                              no-unused-vars
+   46:6    warning  React Hook useEffect has a missing dependency: 'loadHabits'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+   68:14   warning  'error' is defined but never used. Allowed unused caught errors must match /^_/u                               no-unused-vars
+   76:14   warning  'error' is defined but never used. Allowed unused caught errors must match /^_/u                               no-unused-vars
+  520:49   warning  Color literal: { backgroundColor: 'transparent' }                                                              react-native/no-color-literals
+  522:53   warning  Color literal: { backgroundColor: 'transparent' }                                                              react-native/no-color-literals
+  528:64   warning  Color literal: { backgroundColor: 'transparent' }                                                              react-native/no-color-literals
+  529:103  warning  Color literal: { backgroundColor: 'transparent' }                                                              react-native/no-color-literals
+  530:58   warning  Color literal: { backgroundColor: 'transparent' }                                                              react-native/no-color-literals
+  614:23   warning  Color literal: { backgroundColor: 'transparent' }                                                              react-native/no-color-literals
+
+C:\NeuroHabit\neuro-habit\src\screens\InsightsScreen.js
+  92:6  warning  React Hook React.useEffect has a missing dependency: 'currentDashboardSteps'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\NeuroHabit\neuro-habit\src\screens\MoodScreen.js
+   38:16  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u      no-unused-vars
+   60:14  warning  'error' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+  255:25  warning  Color literal: { backgroundColor: 'rgba(255, 255, 255, 0.3)' }                    react-native/no-color-literals
+
+C:\NeuroHabit\neuro-habit\src\screens\SettingsScreen.js
+  50:6  warning  React Hook React.useEffect has missing dependencies: 'metadata?.avatar_emoji', 'metadata?.first_name', 'metadata?.last_name', and 'metadata?.username'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\NeuroHabit\neuro-habit\src\screens\UsernameScreen.js
+  14:10  warning  'useAuth' is defined but never used  no-unused-vars
+
+C:\NeuroHabit\neuro-habit\src\services\backendService.js
+  159:16  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u              no-unused-vars
+  225:14  warning  'fallbackError' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+  237:12  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u              no-unused-vars
+  253:12  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u              no-unused-vars
+  367:12  warning  'backendError' is defined but never used. Allowed unused caught errors must match /^_/u   no-unused-vars
+  400:12  warning  'backendError' is defined but never used. Allowed unused caught errors must match /^_/u   no-unused-vars
+  436:12  warning  'backendError' is defined but never used. Allowed unused caught errors must match /^_/u   no-unused-vars
+  586:14  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u              no-unused-vars
+  592:16  warning  'internetError' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+  641:20  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u              no-unused-vars
+  687:20  warning  'e' is defined but never used. Allowed unused caught errors must match /^_/u              no-unused-vars
+  807:14  warning  'backendError' is defined but never used. Allowed unused caught errors must match /^_/u   no-unused-vars
+  814:16  warning  'supabaseError' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+  835:14  warning  'backendError' is defined but never used. Allowed unused caught errors must match /^_/u   no-unused-vars
+  838:16  warning  'supabaseError' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+
+Γ£û 47 problems (1 error, 46 warnings)
+

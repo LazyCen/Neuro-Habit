@@ -156,7 +156,7 @@ async function fetchFromBackend(path, options = {}, timeoutMs = 8000) {
         if (errorData && (errorData.detail || errorData.message)) {
           errorMessage = errorData.detail || errorData.message;
         }
-      } catch (e) {
+      } catch (_e) {
         // Fallback to default message if JSON parsing fails
       }
       
@@ -217,13 +217,13 @@ async function getEncryptedStorage() {
       encryptionKey: key,
     });
     return encryptedStorage;
-  } catch (e) {
+  } catch (_e) {
     // Final fallback to unencrypted storage if MMKV exists but encryption failed
     try {
       encryptedStorage = new MMKV({ id: 'secure-offline-data' });
       return encryptedStorage;
-    } catch (fallbackError) {
-      throw e; // Throw original error if even unencrypted MMKV fails
+    } catch (_fallbackError) {
+      throw _e; // Throw original error if even unencrypted MMKV fails
     }
   }
 }
@@ -234,7 +234,7 @@ async function getSecureArray(key) {
     const raw = storage.getString(key);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
+  } catch (_e) {
     try {
       const raw = await AsyncStorage.getItem(`fallback_${key}`);
       const parsed = raw ? JSON.parse(raw) : [];
@@ -250,7 +250,7 @@ async function setSecureArray(key, value) {
   try {
     const storage = await getEncryptedStorage();
     storage.set(key, JSON.stringify(value));
-  } catch (e) {
+  } catch (_e) {
     try {
       await AsyncStorage.setItem(`fallback_${key}`, JSON.stringify(value));
     } catch (fallbackError) {
@@ -364,7 +364,7 @@ async function postMoodOnline(mood, note) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mood, note }),
     });
-  } catch (backendError) {
+  } catch (_backendError) {
     return await saveMoodViaSupabase(mood, note);
   }
 }
@@ -397,7 +397,7 @@ async function postMoodBulkOnline(moods) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(moods),
     });
-  } catch (backendError) {
+  } catch (_backendError) {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
     if (!userId) throw new Error('No authenticated user for Supabase mood bulk insert');
@@ -433,7 +433,7 @@ async function postMetricsBulkOnline(metricsList) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(metricsList),
     });
-  } catch (backendError) {
+  } catch (_backendError) {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
     if (!userId) throw new Error('No authenticated user for Supabase metrics bulk upsert');
@@ -583,13 +583,13 @@ export const backendService = {
         })
       );
       return true;
-    } catch (e) {
+    } catch (_e) {
       // 2. If custom backend is down, check general internet connectivity (e.g., Supabase or Google)
       try {
         const publicPing = await fetchWithTimeout(process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://www.google.com', { method: 'HEAD' }, 3000);
         // If we can reach Supabase or Google, we are "online"
         return publicPing.ok || publicPing.status < 500;
-      } catch (internetError) {
+      } catch (_internetError) {
         return false;
       }
     }
@@ -638,7 +638,7 @@ export const backendService = {
             } else {
               remainingHabits.push(habit);
             }
-          } catch (e) {
+          } catch (_e) {
             remainingHabits.push(habit);
           }
         }
@@ -684,7 +684,7 @@ export const backendService = {
                  .eq('habit_id', item.id)
                  .gte('created_at', startOfDay.toISOString());
             }
-          } catch (e) {
+          } catch (_e) {
             remainingToggles.push(item);
           }
         }
@@ -804,14 +804,14 @@ export const backendService = {
         await cacheInsights(insights);
       }
       return insights;
-    } catch (backendError) {
+    } catch (_backendError) {
       try {
         const supabaseInsights = await fetchInsightsViaSupabase();
         if (supabaseInsights.length > 0) {
           await cacheInsights(supabaseInsights);
           return supabaseInsights;
         }
-      } catch (supabaseError) {
+      } catch (_supabaseError) {
         console.warn('Insights fetch failed on backend and Supabase fallback.');
       }
       return await this.getCachedInsights();
@@ -832,10 +832,10 @@ export const backendService = {
   async syncMetrics(steps, screenTime) {
     try {
       return await postMetricsOnline(steps, screenTime);
-    } catch (backendError) {
+    } catch (_backendError) {
       try {
         return await saveMetricsViaSupabase(steps, screenTime);
-      } catch (supabaseError) {
+      } catch (_supabaseError) {
         console.warn('Metrics sync failed online; queued for retry.');
         await appendArrayStorage(PENDING_METRICS_KEY, {
           steps,

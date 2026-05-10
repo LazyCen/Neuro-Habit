@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   StyleSheet, 
   View, 
@@ -13,16 +13,13 @@ import {
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Path, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import Animated, { 
   FadeInUp, 
   FadeInDown, 
-  Layout, 
-  SlideInRight,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  interpolateColor
 } from 'react-native-reanimated';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -249,7 +246,15 @@ export default function AuthScreen() {
           style={themedStyles.header}
         >
           <View style={themedStyles.logoCircle}>
-            <Ionicons name="pulse" size={40} color={colors.white} />
+            <Animated.Image 
+              source={
+                isDark
+                  ? require('../../assets/images/icon.png')
+                  : require('../../assets/images/icon-light.png')
+              }
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="contain"
+            />
           </View>
           <Text style={themedStyles.welcomeText}>
             {isLogin ? 'Neuro Habit' : 'Join Us'}
@@ -335,6 +340,9 @@ export default function AuthScreen() {
                 selectionColor={PRIMARY}
                 cursorColor={PRIMARY}
                 underlineColorAndroid="transparent"
+                importantForAutofill="yes"
+                autoComplete="email"
+                textContentType="emailAddress"
               />
             </View>
           </View>
@@ -354,6 +362,9 @@ export default function AuthScreen() {
                 selectionColor={PRIMARY}
                 cursorColor={PRIMARY}
                 underlineColorAndroid="transparent"
+                importantForAutofill="yes"
+                autoComplete="password"
+                textContentType="password"
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                 <Ionicons 
@@ -444,21 +455,29 @@ const styles = (colors, isDark, PRIMARY, SECONDARY, ACCENT, BG_COLOR, CARD_BG, T
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 50,
   },
   headerCompact: {
     marginBottom: 20,
   },
   logoCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: colors.border,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    // icon-light.png has a solid white background — matching this container to white
+    // makes the logo appear seamlessly part of the light-theme screen (background is #F8FAFC).
+    // In dark mode the container is transparent so icon.png (dark bg) blends with the dark screen.
+    backgroundColor: isDark ? 'transparent' : colors.white,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 0,
     marginBottom: 20,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: isDark ? 0.35 : 0,
+    shadowRadius: 20,
+    elevation: isDark ? 8 : 0,
+    overflow: 'hidden',
   },
   logoCircleSmall: {
     width: 50,

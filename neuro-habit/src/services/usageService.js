@@ -10,19 +10,16 @@ let HealthConnect = null;
 
 /** Emergency kill-switch — set to false once HC proves persistently broken */
 let isHealthConnectEnabled = true;
-let _hcCrashChecked = false;
 let _hcInitPromise = null;
-let _hcLock = false;
 
 /** Accumulated live-step delta since the watcher started this session */
 let _liveStepAccumulator = 0;
 let _liveStepSubscription = null;
-let _liveStepStartedAt = null; // Date when we started watching
 let _watcherStarting = false;  // Synchronous guard to prevent double-start during async init
 
 // Base step count loaded from AsyncStorage at session start (from last HC sync)
 let _baseStepCount = 0;
-let _baseStepLoadedAt = null; // Date the base was fetched for
+
 const STORAGE_KEY_BASE_STEPS = '@NeuroHabit:BaseStepCount';
 const STORAGE_KEY_BASE_DATE  = '@NeuroHabit:BaseStepDate';
 
@@ -50,8 +47,11 @@ try {
 }
 
 // HC SDK status codes
-const HC_SDK_AVAILABLE = 3;
-const INTERVAL_DAILY   = 0;
+const HC_SDK_UNAVAILABLE         = 1; // Health Connect not installed
+const HC_SDK_NEEDS_UPDATE        = 2; // Installed but update required
+const HC_SDK_AVAILABLE           = 3; // Ready to use
+const INTERVAL_DAILY             = 0;
+const HC_PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata';
 
 // Accelerometer-based step detection params (fallback)
 const ACCELEROMETER_UPDATE_INTERVAL_MS = 100;
@@ -211,7 +211,6 @@ async function loadBaseStepCount() {
     const savedCount = await AsyncStorage.getItem(STORAGE_KEY_BASE_STEPS);
     if (savedDate === todayString() && savedCount !== null) {
       _baseStepCount   = parseInt(savedCount, 10) || 0;
-      _baseStepLoadedAt = new Date();
       console.log(`[usageService] Loaded persisted base steps: ${_baseStepCount}`);
     } else {
       _baseStepCount = 0;
@@ -229,7 +228,6 @@ async function saveBaseStepCount(count) {
       [STORAGE_KEY_BASE_DATE,  todayString()],
     ]);
     _baseStepCount    = count;
-    _baseStepLoadedAt = new Date();
   } catch (_e) { /* non-fatal */ }
 }
 
@@ -242,7 +240,6 @@ function ensureLiveWatcher() {
   if (Pedometer?.watchStepCount) {
     try {
       console.log('[usageService] Starting persistent live step watcher.');
-      _liveStepStartedAt = new Date();
       _liveStepSubscription = Pedometer.watchStepCount((result) => {
         if (result && Number.isFinite(result.steps)) {
           // result.steps is the cumulative delta since the watcher was created
@@ -262,8 +259,6 @@ function ensureLiveWatcher() {
     Accelerometer.setUpdateInterval(ACCELEROMETER_UPDATE_INTERVAL_MS);
     let lastMag = 0;
     let lastStepTime = 0;
-
-    _liveStepStartedAt = new Date();
     _liveStepSubscription = Accelerometer.addListener(({ x, y, z }) => {
       const mag  = Math.sqrt(x * x + y * y + z * z);
       const lin  = Math.abs(mag - GRAVITY_EARTH);
@@ -280,15 +275,7 @@ function ensureLiveWatcher() {
   _watcherStarting = false;
 }
 
-/** Stop the live watcher (e.g., on app background or unmount) */
-function stopLiveWatcher() {
-  if (_liveStepSubscription) {
-    if (typeof _liveStepSubscription.remove === 'function') {
-      _liveStepSubscription.remove();
-    }
-    _liveStepSubscription = null;
-  }
-}
+
 
 // Re-start the watcher if it was somehow stopped (e.g. native crash) when
 // the app returns to foreground. We do NOT stop it on background — the
@@ -397,7 +384,6 @@ export const usageService = {
   async requestStepPermissions() {
     isHealthConnectEnabled = true;
     _hcInitPromise  = null;
-    _hcCrashChecked = false;
 
     const client = await getHealthConnectClient();
     let healthConnectGranted = false;
@@ -637,8 +623,38 @@ export const usageService = {
     }
   },
 
+  // Returns raw HC SDK status: 1=not installed, 2=needs update, 3=available, 0=unknown
+  async getHcSdkStatus() {
+    if (Platform.OS !== 'android' || !HealthConnect) return 0;
+    try {
+      return await HealthConnect.getSdkStatus();
+    } catch (_e) {
+      return 0;
+    }
+  },
+
   async openHealthConnect() {
     if (Platform.OS !== 'android') return;
+
+    // Check SDK status FIRST — redirect to Play Store if HC isn't installed
+    if (HealthConnect) {
+      try {
+        const status = await HealthConnect.getSdkStatus();
+        if (status === HC_SDK_UNAVAILABLE || status === HC_SDK_NEEDS_UPDATE) {
+          console.log(`[usageService] HC SDK status ${status} — redirecting to Play Store.`);
+          await Linking.openURL(HC_PLAY_STORE_URL).catch(() => {});
+          return;
+        }
+      } catch (e) {
+        console.warn('[usageService] Could not read HC SDK status:', e.message);
+      }
+    } else {
+      // Module not loaded (Android < 28 or missing) — send to Play Store
+      await Linking.openURL(HC_PLAY_STORE_URL).catch(() => {});
+      return;
+    }
+
+    // HC is installed — try to open its settings
     const client = await getHealthConnectClient();
     if (client && typeof client.openHealthConnectSettings === 'function') {
       try {
@@ -648,12 +664,11 @@ export const usageService = {
         console.warn('[usageService] Failed to open HC settings via SDK:', e.message);
       }
     }
-    
-    // Fallback: Try to open via intent
+
+    // Fallback: system intent
     try {
       await Linking.sendIntent('androidx.health.ACTION_HEALTH_CONNECT_SETTINGS');
-    } catch (e) {
-      // Final fallback: just open app settings
+    } catch (_e) {
       Linking.openSettings();
     }
   },

@@ -5,20 +5,18 @@ import {
   Text, 
   TextInput, 
   TouchableOpacity, 
-  ActivityIndicator, 
-  Platform,
-  Dimensions
+  ActivityIndicator
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp, FadeOutUp } from 'react-native-reanimated';
 import { supabase } from '../services/supabaseClient';
-import { useAuth } from '../context/AuthContext';
+
 import { useTheme } from '../context/ThemeContext';
 import PremiumBackground from '../components/PremiumBackground';
 import AppMessageModal from '../components/AppMessageModal';
 
-const { width } = Dimensions.get('window');
+
 
 export default function UsernameScreen() {
   const { theme: colors, isDark } = useTheme();
@@ -26,7 +24,7 @@ export default function UsernameScreen() {
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [modalConfig, setModalConfig] = useState({ visible: false, title: "", message: "" });
-  const { session } = useAuth();
+
   const themedStyles = styles(colors, isDark);
 
   const showSuccess = (message) => {

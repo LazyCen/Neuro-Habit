@@ -30,7 +30,6 @@
         "android.permission.health.READ_STEPS",
         "android.permission.health.WRITE_STEPS"
       ],
-
       "package": "com.neurohabit.app",
       "queries": [
         {
@@ -50,7 +49,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 250,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
@@ -71,7 +70,8 @@
       "expo-secure-store",
       "@sentry/react-native",
       "react-native-health-connect",
-      "expo-audio"
+      "expo-audio",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "reactCompiler": true

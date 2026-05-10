@@ -1,5 +1,6 @@
 import React from "react";
-import { ScrollView, Text, View, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { ScrollView, Text, View, StyleSheet, ActivityIndicator, Platform, TouchableOpacity } from "react-native";
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,6 +10,8 @@ import { useTheme } from "../context/ThemeContext";
 import Card from "../components/Card";
 import PremiumBackground from "../components/PremiumBackground";
 import { fetchWeeklyStepTrend } from "../services/api";
+import { usageService } from "../services/usageService";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Lazy load heavy chart library to optimize initial bundle size
 const AdvancedChart = React.lazy(() => import("../components/AdvancedChart"));
@@ -23,12 +26,61 @@ export default function InsightsScreen() {
   const { theme: colors } = useTheme();
   const { insights, data, loading, isOfflineMode } = useDashboard();
   const [trend, setTrend] = React.useState([]);
+  const [endDate, setEndDate] = React.useState(new Date());
+  const [showDatePicker, setShowDatePicker] = React.useState(false);
+  const [liveSteps, setLiveSteps] = React.useState(0);
+  const liveStepSubscriptionRef = React.useRef(null);
   const themedStyles = styles(colors);
+
+  React.useEffect(() => {
+    const startLiveSteps = async () => {
+      try {
+        let baseline = 0;
+        try {
+          const raw = await AsyncStorage.getItem('@NeuroHabit:DailyStepsCache');
+          if (raw) {
+            const { date, steps } = JSON.parse(raw);
+            const todayKey = new Date().toISOString().slice(0, 10);
+            if (date === todayKey && Number.isFinite(steps)) baseline = steps;
+          }
+        } catch (_e) {}
+
+        const sub = usageService.watchLiveSteps((stepsDelta) => {
+          const total = baseline + stepsDelta;
+          setLiveSteps(total >= 5 ? total : 0);
+        });
+        liveStepSubscriptionRef.current = sub;
+      } catch (e) {
+        console.warn('Could not start live step tracking:', e?.message);
+      }
+    };
+    startLiveSteps();
+
+    return () => {
+      if (liveStepSubscriptionRef.current) {
+        usageService.stopWatchingLiveSteps(liveStepSubscriptionRef.current);
+        liveStepSubscriptionRef.current = null;
+      }
+    };
+  }, []);
+
+  const currentDashboardSteps = data?.steps > 0 ? data.steps : liveSteps;
+
+  // Compute a human-readable date range label for the last 7 days ending at endDate
+  const formatDateRange = React.useCallback(() => {
+    const start = new Date(endDate);
+    start.setDate(endDate.getDate() - 6);
+    const opts = { month: 'short', day: 'numeric' };
+    const startStr = start.toLocaleDateString('en-US', opts);
+    const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${startStr} – ${endStr}`;
+  }, [endDate]);
 
   React.useEffect(() => {
     let isActive = true;
     const loadTrend = async () => {
-      const result = await fetchWeeklyStepTrend(data?.steps || 0);
+      // Fetch 7 days of trend data ending at the selected endDate
+      const result = await fetchWeeklyStepTrend(currentDashboardSteps, 7, endDate.toISOString().slice(0, 10));
       if (isActive) {
         setTrend(Array.isArray(result) ? result : []);
       }
@@ -37,7 +89,40 @@ export default function InsightsScreen() {
     return () => {
       isActive = false;
     };
-  }, [data?.steps]);
+  }, [endDate, currentDashboardSteps]);
+
+  // Guarantee real-time sync by deriving the display array during render
+  // This completely eliminates stale closures or useEffect race conditions
+  const displayTrend = React.useMemo(() => {
+    if (!trend || trend.length === 0) return [];
+    const isToday = endDate.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
+    if (!isToday) return trend;
+    
+    const updated = [...trend];
+    updated[updated.length - 1] = {
+      ...updated[updated.length - 1],
+      steps: currentDashboardSteps
+    };
+    return updated;
+  }, [trend, currentDashboardSteps, endDate]);
+
+  const onDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (event.type === 'dismissed') {
+      setShowDatePicker(false);
+      return;
+    }
+    if (selectedDate) {
+      setEndDate(selectedDate);
+      if (Platform.OS === 'ios') {
+         // for ios we typically rely on a 'done' button or similar, but since we use 'default' display,
+         // we might need to handle it or keep it open. We'll close it here for simplicity.
+         setShowDatePicker(false);
+      }
+    }
+  };
 
   return (
     <SafeAreaView style={themedStyles.safeArea}>
@@ -74,11 +159,26 @@ export default function InsightsScreen() {
               <Card style={themedStyles.chartCard}>
                 <React.Suspense fallback={<ChartFallback />}>
                   <AdvancedChart 
-                    data={trend.length > 0 ? trend : [{ day: "Today", steps: data?.steps || 0 }]} 
+                    data={displayTrend.length > 0 ? displayTrend : [{ day: "Today", steps: currentDashboardSteps || 0 }]} 
                     colors={colors}
                   />
                 </React.Suspense>
               </Card>
+              {/* Date range label below the chart */}
+              <TouchableOpacity style={themedStyles.dateContainer} onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
+                <Ionicons name="calendar-outline" size={13} color={colors.subtext} />
+                <Text style={themedStyles.dateText}>{formatDateRange()} ▾</Text>
+              </TouchableOpacity>
+              
+              {showDatePicker && (
+                <DateTimePicker
+                  value={endDate}
+                  mode="date"
+                  display="default"
+                  maximumDate={new Date()}
+                  onChange={onDateChange}
+                />
+              )}
             </Animated.View>
 
             <Animated.Text entering={FadeInUp.delay(600)} style={themedStyles.sectionTitle}>Recent Insights</Animated.Text>
@@ -216,6 +316,19 @@ const styles = (colors) => StyleSheet.create({
     color: colors.subtext,
     fontSize: 10,
     marginTop: 12,
+    fontWeight: '500',
+  },
+  dateContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  dateText: {
+    color: colors.subtext,
+    fontSize: 12,
     fontWeight: '500',
   },
 });

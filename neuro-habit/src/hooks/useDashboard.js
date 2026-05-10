@@ -89,7 +89,7 @@ export default function useDashboard() {
               const freshInsights = await backendService.getInsights();
               if (controller.signal.aborted) return;
               aiInsights = freshInsights;
-            } catch (err) {
+            } catch (_err) {
               safeSet(setIsOfflineMode)(true);
             }
           } else {

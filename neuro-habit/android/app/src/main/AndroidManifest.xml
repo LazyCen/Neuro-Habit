@@ -10,11 +10,10 @@
   <uses-permission android:name="android.permission.VIBRATE"/>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.health.READ_STEPS"/>
-  <uses-permission android:name="android.permission.health.WRITE_STEPS"/>
   <uses-permission android:name="android.permission.health.READ_DISTANCE"/>
+  <uses-permission android:name="android.permission.health.READ_STEPS"/>
   <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED"/>
-  
+  <uses-permission android:name="android.permission.health.WRITE_STEPS"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
@@ -22,31 +21,24 @@
       <data android:scheme="https"/>
     </intent>
     <intent>
-      <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+      <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
     </intent>
     <intent>
-      <action android:name="androidx.health.connect.client.ACTION_HEALTH_CONNECT_SETTINGS" />
+      <action android:name="androidx.health.connect.client.ACTION_HEALTH_CONNECT_SETTINGS"/>
     </intent>
     <intent>
-      <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
-      <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+      <action android:name="android.intent.action.VIEW_PERMISSION_USAGE"/>
+      <category android:name="android.intent.category.HEALTH_PERMISSIONS"/>
     </intent>
-    <package android:name="com.google.android.apps.healthdata" />
-    <package android:name="com.google.android.healthconnect.controller" />
-    <package android:name="com.google.android.gms" />
+    <package android:name="com.google.android.apps.healthdata"/>
+    <package android:name="com.google.android.healthconnect.controller"/>
+    <package android:name="com.google.android.gms"/>
   </queries>
-
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules">
-    
-    <!-- Health Connect Rationale Metadata -->
-    <meta-data
-      android:name="androidx.health.connect.client.HealthConnectClient.PermissionRationaleActivity"
-      android:value=".HealthConnectRationaleActivity" />
-
+    <meta-data android:name="androidx.health.connect.client.HealthConnectClient.PermissionRationaleActivity" android:value=".HealthConnectRationaleActivity"/>
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
-    
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="portrait">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
@@ -59,18 +51,23 @@
         <data android:scheme="neurohabit"/>
         <data android:scheme="exp+neuro-habit"/>
       </intent-filter>
-    </activity>
-
-    <!-- Dedicated Rationale Activity -->
-    <activity
-      android:name=".HealthConnectRationaleActivity"
-      android:exported="true">
       <intent-filter>
-        <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
       </intent-filter>
       <intent-filter>
-        <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
-        <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+        <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
+      </intent-filter>
+    </activity>
+    <activity android:name=".HealthConnectRationaleActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW_PERMISSION_USAGE"/>
+        <category android:name="android.intent.category.HEALTH_PERMISSIONS"/>
       </intent-filter>
     </activity>
   </application>

@@ -9,7 +9,7 @@ import Animated, {
   Easing,
   interpolate
 } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
+
 import { useTheme } from '../context/ThemeContext';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 
@@ -52,7 +52,7 @@ export default function Preloader() {
       -1,
       false
     );
-  }, []);
+  }, [glowPulse, opacity, pulse, rotation]);
 
   const animatedLogoStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pulse.value }],
@@ -100,16 +100,26 @@ export default function Preloader() {
           <Animated.View style={[styles.glow, animatedGlowSecondaryStyle, { backgroundColor: theme.secondary }]} />
           <Animated.View style={[styles.glow, animatedGlowStyle, { backgroundColor: theme.primary }]} />
           <View style={[styles.iconCircle, { 
-            backgroundColor: theme.primary + '1A', 
-            borderColor: theme.primary + '4D',
-            shadowColor: theme.primary 
+            backgroundColor: isDark ? theme.background : theme.white,
+            borderColor: isDark ? theme.primary + '4D' : 'transparent',
+            shadowColor: theme.primary,
+            shadowOpacity: isDark ? 0.5 : 0,
+            elevation: isDark ? 10 : 0,
           }]}>
-            <Ionicons name="pulse" size={60} color={theme.primary} />
+            <Animated.Image 
+              source={
+                isDark
+                  ? require('../../assets/images/icon.png')
+                  : require('../../assets/images/icon-light.png')
+              }
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="contain"
+            />
           </View>
         </Animated.View>
 
         {/* Text Section */}
-        <Animated.View style={{ opacity: opacity.value, alignItems: 'center', marginTop: 40 }}>
+        <Animated.View style={{ opacity: opacity.value, alignItems: 'center', marginTop: 50 }}>
           <Text style={[styles.title, { 
             color: theme.text,
             textShadowColor: theme.primary + (isDark ? '80' : '33')
@@ -131,28 +141,29 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   logoContainer: {
-    width: 140,
-    height: 140,
+    width: 150,
+    height: 150,
     justifyContent: 'center',
     alignItems: 'center',
   },
   iconCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
+    borderWidth: 0,
+    overflow: 'hidden',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0,
     shadowRadius: 20,
-    elevation: 10,
+    elevation: 0,
   },
   glow: {
     position: 'absolute',
-    width: 160,
-    height: 160,
-    borderRadius: 80,
+    width: 170,
+    height: 170,
+    borderRadius: 85,
     opacity: 0.1,
   },
   title: {

@@ -35,7 +35,7 @@ export default function MoodScreen() {
     if (Platform.OS !== 'web') {
       try {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch (e) {
+      } catch (_e) {
         console.warn('Haptics not available');
       }
     }
@@ -57,7 +57,7 @@ export default function MoodScreen() {
       if (player) {
         player.play();
       }
-    } catch (error) {
+    } catch (_error) {
       // Silently fail - occurs if native module is missing (Expo Go) or asset is not found
       console.log('[MoodScreen] Audio playback skipped: Native module or asset not available');
     }
@@ -256,7 +256,7 @@ const styles = (colors) => StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: colors.white + '4D', // 30% alpha white
     justifyContent: 'center',
     alignItems: 'center',
   },

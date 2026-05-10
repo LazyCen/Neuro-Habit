@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, Text, ActivityIndicator } from 'react-native';
+import { View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import AppNavigator from './AppNavigator';
 import AuthScreen from '../screens/AuthScreen';
@@ -8,7 +8,7 @@ import TutorialScreen from '../screens/TutorialScreen';
 import { useTheme } from '../context/ThemeContext';
 import Preloader from '../components/Preloader';
 
-import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
+
 
 export default function RootNavigator() {
   const { session, loading } = useAuth();
@@ -59,6 +59,4 @@ export default function RootNavigator() {
   );
 }
 
-const styles = StyleSheet.create({
-});
 

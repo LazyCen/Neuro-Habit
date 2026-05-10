@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, Alert, Pressable } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, Pressable } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -43,7 +43,7 @@ export default function HabitScreen() {
 
   useEffect(() => {
     loadHabits();
-  }, []);
+  }, [loadHabits]);
 
   const getHabitMeta = async () => {
     try {
@@ -65,7 +65,7 @@ export default function HabitScreen() {
       const raw = await AsyncStorage.getItem(LOCAL_HABITS_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
       return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
+    } catch (_error) {
       return [];
     }
   };
@@ -73,12 +73,12 @@ export default function HabitScreen() {
   const setLocalHabits = async (items) => {
     try {
       await AsyncStorage.setItem(LOCAL_HABITS_KEY, JSON.stringify(items));
-    } catch (error) {
+    } catch (_error) {
       // Ignore local persistence errors to avoid blocking UI.
     }
   };
 
-  const syncStreakReminder = async (habitItems) => {
+  const syncStreakReminder = React.useCallback(async (habitItems) => {
     const total = Array.isArray(habitItems) ? habitItems.length : 0;
     const completed = Array.isArray(habitItems)
       ? habitItems.filter((h) => Boolean(h?.completed)).length
@@ -86,7 +86,7 @@ export default function HabitScreen() {
     notificationService
       .scheduleStreakRiskReminder(completed, total)
       .catch(() => {});
-  };
+  }, []);
 
   const processHabitsWithMeta = (rawHabits, metaMap) => {
     const nowMs = backendService.getTrustedTime();
@@ -141,7 +141,7 @@ export default function HabitScreen() {
     return { processed, metaChanged };
   };
 
-  const loadHabits = async () => {
+  const loadHabits = React.useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user?.id) return;
 
@@ -211,7 +211,7 @@ export default function HabitScreen() {
 
     setHabits(processResult.processed);
     await syncStreakReminder(processResult.processed);
-  };
+  }, [syncStreakReminder]);
 
   const toggleHabit = (id) => {
     // --- Optimistic UI: apply state change immediately ---
@@ -517,17 +517,17 @@ function HabitItem({ item, onToggle, onDelete, colors }) {
           android_ripple={null}
           style={{ borderRadius: 24, overflow: 'hidden' }}
         >
-          <Animated.View style={[animatedStyle, { backgroundColor: 'transparent' }]}>
+          <Animated.View style={[animatedStyle, { backgroundColor: colors.transparent }]}>
             <Card style={[themedStyles.habitItem, item.completed && themedStyles.habitCompleted, { marginBottom: 0 }]}>
-              <View style={[themedStyles.habitInfo, { backgroundColor: 'transparent' }]}>
+              <View style={[themedStyles.habitInfo, { backgroundColor: colors.transparent }]}>
                 <Ionicons 
                   name={item.completed ? "checkmark-circle" : "ellipse-outline"} 
                   size={28} 
                   color={item.completed ? colors.green : colors.subtext} 
                 />
-                <View style={[themedStyles.habitTextContainer, { backgroundColor: 'transparent' }]}>
-                  <Text style={[themedStyles.habitName, item.completed && themedStyles.textCompleted, { backgroundColor: 'transparent' }]}>{item.name}</Text>
-                  <Text style={[themedStyles.streakText, { backgroundColor: 'transparent' }]}>🔥 {item.streak} day streak</Text>
+                <View style={[themedStyles.habitTextContainer, { backgroundColor: colors.transparent }]}>
+                  <Text style={[themedStyles.habitName, item.completed && themedStyles.textCompleted, { backgroundColor: colors.transparent }]}>{item.name}</Text>
+                  <Text style={[themedStyles.streakText, { backgroundColor: colors.transparent }]}>🔥 {item.streak} day streak</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
@@ -613,7 +613,7 @@ const styles = (colors) => StyleSheet.create({
   },
   habitTextContainer: {
     marginLeft: 16,
-    backgroundColor: 'transparent',
+    backgroundColor: colors.transparent,
   },
   habitName: {
     fontSize: 18,

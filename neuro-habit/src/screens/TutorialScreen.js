@@ -9,9 +9,8 @@ import {
   Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeInRight, FadeOutLeft } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { supabase } from '../services/supabaseClient';
-import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import PremiumBackground from '../components/PremiumBackground';
 
