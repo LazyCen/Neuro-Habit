@@ -4,7 +4,10 @@ import { MMKV } from 'react-native-mmkv';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
 import * as Sentry from '@sentry/react-native';
+import { AppState } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { supabase } from './supabaseClient';
+import { clearHabitCache } from './habitCacheService';
 
 const LOCAL_MOOD_LOGS_KEY = 'local_mood_logs_v1';
 const PENDING_MOODS_KEY = 'pending_moods_v1';
@@ -12,14 +15,76 @@ const PENDING_METRICS_KEY = 'pending_metrics_v1';
 const CACHED_INSIGHTS_KEY = 'cached_insights_v1';
 const LOCAL_HABITS_KEY = 'local_habits_v1';
 const PENDING_HABIT_TOGGLES_KEY = 'pending_habit_toggles_v1';
+const PENDING_HABIT_DELETES_KEY = 'pending_habit_deletes_v1';
 const HABIT_META_KEY = 'habit_meta_v2';
 const DASHBOARD_CACHE_KEY = 'dashboard_data_cache_v1';
 const HIDE_SYNC_CARD_KEY = 'hideSyncCard_v2';
+const SYNC_STATUS_KEY = 'sync_status_v1';
 const SYNC_BATCH_SIZE = 100;
+const NETWORK_POLL_INTERVAL_MS = 15000;
 
 let timeOffsetMs = 0;
 let timeSynced = false;
 let isFetchingTime = false;
+let syncPromise = null;
+let networkMonitorHandle = null; // interval handle for legacy polling fallback
+let netInfoUnsubscribe = null;   // NetInfo real-time listener
+let appStateSubscription = null; // AppState foreground listener
+let syncEngineInitialized = false; // idempotency guard
+let wasOnline = null;
+const syncListeners = new Set();
+let syncStatus = {
+  inProgress: false,
+  phase: 'idle',
+  pendingCount: 0,
+  lastSyncedAt: null,
+  lastError: null,
+};
+
+function createOperationId() {
+  return `op_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createItemFingerprint(item) {
+  const entityType = item?.entityType || 'unknown';
+  const entityId = item?.entityId || '';
+  const payload = item?.payload || {};
+  return `${entityType}:${entityId}:${JSON.stringify(payload)}`;
+}
+
+function updateSyncStatus(patch = {}) {
+  syncStatus = { ...syncStatus, ...patch };
+  syncListeners.forEach((listener) => {
+    try {
+      listener(syncStatus);
+    } catch (_e) {
+      // Listener errors should not break sync flow.
+    }
+  });
+}
+
+async function persistSyncStatus() {
+  try {
+    await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(syncStatus));
+  } catch (_e) {
+    // Best-effort persistence only.
+  }
+}
+
+function hydrateQueueItem(item, defaults = {}) {
+  const queuedAt = item.queuedAt || defaults.queuedAt || new Date().toISOString();
+  return {
+    ...item,
+    opId: item.opId || createOperationId(),
+    queuedAt,
+    updatedAt: item.updatedAt || queuedAt,
+    retryCount: Number.isFinite(item.retryCount) ? item.retryCount : 0,
+    nextRetryAt: item.nextRetryAt || null,
+    payload: item.payload || defaults.payload || null,
+    entityType: item.entityType || defaults.entityType || 'generic',
+    entityId: item.entityId || defaults.entityId || null,
+  };
+}
 
 function trimTrailingSlash(url) {
   if (!url) return '';
@@ -265,8 +330,18 @@ const setArrayStorage = setSecureArray;
 
 async function appendArrayStorage(key, value) {
   const current = await getSecureArray(key);
-  current.push(value);
+  const hydrated = hydrateQueueItem(value);
+  const fingerprint = createItemFingerprint(hydrated);
+  const alreadyQueued = current.some((item) => {
+    const existing = hydrateQueueItem(item);
+    return existing.opId === hydrated.opId || createItemFingerprint(existing) === fingerprint;
+  });
+  if (alreadyQueued) {
+    return { queued: false, duplicate: true, item: hydrated };
+  }
+  current.push(hydrated);
   await setSecureArray(key, current);
+  return { queued: true, duplicate: false, item: hydrated };
 }
 
 // Data retention policy: Purge entries older than 30 days
@@ -301,6 +376,15 @@ async function pruneOldLocalData() {
     });
     if (validPendingMetrics.length !== pendingMetrics.length) {
       await setSecureArray(PENDING_METRICS_KEY, validPendingMetrics);
+    }
+
+    const pendingDeletes = await getSecureArray(PENDING_HABIT_DELETES_KEY);
+    const validPendingDeletes = pendingDeletes.filter((item) => {
+      const time = new Date(item.queuedAt || Date.now()).getTime();
+      return time >= thirtyDaysAgo;
+    });
+    if (validPendingDeletes.length !== pendingDeletes.length) {
+      await setSecureArray(PENDING_HABIT_DELETES_KEY, validPendingDeletes);
     }
   } catch (error) {
     console.error('Error during data retention pruning:', error);
@@ -354,33 +438,41 @@ async function saveMoodViaSupabase(mood, note) {
   return { success: true, via: 'supabase', data };
 }
 
-async function postMoodOnline(mood, note) {
+async function postMoodOnline(mood, note, opId = null) {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
     
     return await fetchFromBackend(`/mood${userId ? `?user_id=${userId}` : ''}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mood, note }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(opId ? { 'X-Operation-Id': opId } : {}),
+      },
+      body: JSON.stringify({ mood, note, ...(opId ? { op_id: opId } : {}) }),
     });
   } catch (_backendError) {
     return await saveMoodViaSupabase(mood, note);
   }
 }
 
-async function postMetricsOnline(steps, screenTime) {
+async function postMetricsOnline(steps, screenTime, opId = null) {
   const { data: { session } } = await supabase.auth.getSession();
   const userId = session?.user?.id;
   
-  const params = new URLSearchParams();
-  if (userId) params.append('user_id', userId);
-  
-  return await fetchFromBackend(`/metrics${userId ? `?user_id=${userId}` : ''}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ steps, screen_time: screenTime }),
-  });
+  try {
+    return await fetchFromBackend(`/metrics${userId ? `?user_id=${userId}` : ''}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(opId ? { 'X-Operation-Id': opId } : {}),
+      },
+      body: JSON.stringify({ steps, screen_time: screenTime, ...(opId ? { op_id: opId } : {}) }),
+    });
+  } catch (_backendError) {
+    // Fallback: write directly to Supabase when custom backend is unavailable
+    return await saveMetricsViaSupabase(steps, screenTime);
+  }
 }
 
 async function postMoodBulkOnline(moods) {
@@ -531,6 +623,117 @@ async function createHabitViaSupabase(title) {
 }
 
 export const backendService = {
+  async initializeSyncEngine() {
+    // Idempotency guard: only initialize once per app lifecycle
+    if (syncEngineInitialized) return;
+    syncEngineInitialized = true;
+
+    try {
+      const raw = await AsyncStorage.getItem(SYNC_STATUS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          syncStatus = { ...syncStatus, ...parsed, inProgress: false, phase: 'idle' };
+        }
+      }
+    } catch (_e) {
+      // Ignore hydration errors and continue with defaults.
+    }
+    await this.refreshPendingCount();
+    this.startNetworkMonitor();
+  },
+
+  subscribeToSyncStatus(listener) {
+    if (typeof listener !== 'function') return () => {};
+    syncListeners.add(listener);
+    listener(syncStatus);
+    return () => syncListeners.delete(listener);
+  },
+
+  getSyncStatus() {
+    return { ...syncStatus };
+  },
+
+  async refreshPendingCount() {
+    const [pendingMoods, pendingMetrics, pendingToggles, pendingDeletes, localHabits] = await Promise.all([
+      getArrayStorage(PENDING_MOODS_KEY),
+      getArrayStorage(PENDING_METRICS_KEY),
+      getArrayStorage(PENDING_HABIT_TOGGLES_KEY),
+      getArrayStorage(PENDING_HABIT_DELETES_KEY),
+      getArrayStorage(LOCAL_HABITS_KEY),
+    ]);
+    const pendingCount = pendingMoods.length + pendingMetrics.length + pendingToggles.length + pendingDeletes.length + localHabits.length;
+    updateSyncStatus({ pendingCount });
+    return pendingCount;
+  },
+
+  startNetworkMonitor() {
+    // Avoid duplicate listeners
+    if (netInfoUnsubscribe || networkMonitorHandle) return;
+
+    // Primary: real-time NetInfo listener (instant, no polling delay)
+    netInfoUnsubscribe = NetInfo.addEventListener((state) => {
+      const online = Boolean(state.isConnected && state.isInternetReachable !== false);
+      if (wasOnline === false && online === true) {
+        this.syncPendingData({ reason: 'netinfo_reconnected' }).catch(() => {});
+      }
+      wasOnline = online;
+    });
+
+    // Secondary: AppState listener — sync when app comes to foreground
+    if (!appStateSubscription) {
+      let lastAppState = AppState.currentState;
+      appStateSubscription = AppState.addEventListener('change', (nextState) => {
+        const wasBackground = lastAppState.match(/inactive|background/);
+        const isNowActive = nextState === 'active';
+        lastAppState = nextState;
+        if (wasBackground && isNowActive) {
+          // Re-check network and sync on foreground resume
+          NetInfo.fetch().then((netState) => {
+            const online = Boolean(netState.isConnected && netState.isInternetReachable !== false);
+            wasOnline = online;
+            if (online) {
+              this.syncPendingData({ reason: 'foreground_resume' }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      });
+    }
+
+    // Fallback polling: keeps sync healthy even if NetInfo events are throttled
+    // on some Android OEMs. Interval is longer since NetInfo handles fast events.
+    networkMonitorHandle = setInterval(async () => {
+      try {
+        const online = await this.isOnline();
+        if (wasOnline === false && online === true) {
+          this.syncPendingData({ reason: 'poll_reconnected' }).catch(() => {});
+        }
+        wasOnline = online;
+      } catch (_e) {
+        // Keep poller alive even if checks fail.
+      }
+    }, NETWORK_POLL_INTERVAL_MS);
+  },
+
+  stopNetworkMonitor() {
+    if (netInfoUnsubscribe) {
+      netInfoUnsubscribe();
+      netInfoUnsubscribe = null;
+    }
+    if (appStateSubscription) {
+      appStateSubscription.remove();
+      appStateSubscription = null;
+    }
+    if (networkMonitorHandle) {
+      clearInterval(networkMonitorHandle);
+      networkMonitorHandle = null;
+    }
+  },
+
+  async forceSyncNow() {
+    return this.syncPendingData({ reason: 'manual' });
+  },
+
   async fetchTrustedTime(retryCount = 0) {
     if (timeSynced) return;
     
@@ -572,26 +775,31 @@ export const backendService = {
   },
 
   async isOnline() {
-    const baseUrls = getApiBaseUrls();
+    // Primary check: NetInfo — instant, no HTTP round-trip needed
     try {
-      // 1. Try to ping the custom backend(s)
-      await Promise.any(
-        baseUrls.map(async (baseUrl) => {
-          const response = await fetchWithTimeout(`${baseUrl}/`, {}, 3000);
-          if (response.ok) return true;
-          throw new Error('Ping failed');
-        })
+      const netState = await NetInfo.fetch();
+      const connected = Boolean(
+        netState.isConnected &&
+        netState.isInternetReachable !== false
       );
-      return true;
-    } catch (_e) {
-      // 2. If custom backend is down, check general internet connectivity (e.g., Supabase or Google)
-      try {
-        const publicPing = await fetchWithTimeout(process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://www.google.com', { method: 'HEAD' }, 3000);
-        // If we can reach Supabase or Google, we are "online"
-        return publicPing.ok || publicPing.status < 500;
-      } catch (_internetError) {
-        return false;
-      }
+      if (!connected) return false;
+      // NetInfo says we're online — trust it for Supabase-only architecture
+      // (no custom backend to ping, so NetInfo + Supabase token check is sufficient)
+    } catch (_netInfoError) {
+      // NetInfo unavailable — fall through to Supabase session check
+    }
+
+    // Validation: confirm real internet by checking if Supabase auth responds
+    // This detects captive portals without relying on a custom backend.
+    try {
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      if (!supabaseUrl) return true; // can't validate, assume online
+      const pingUrl = `${supabaseUrl}/auth/v1/settings`;
+      const res = await fetchWithTimeout(pingUrl, { method: 'GET' }, 5000);
+      // Supabase returns 200 for this public endpoint when reachable
+      return res.status < 500;
+    } catch (_supabaseError) {
+      return false;
     }
   },
 
@@ -606,26 +814,79 @@ export const backendService = {
     }
   },
 
-  async syncPendingData() {
+  async syncPendingData({ reason = 'auto' } = {}) {
+    if (syncPromise) return syncPromise;
+
+    syncPromise = (async () => {
+      updateSyncStatus({ inProgress: true, phase: 'preparing', lastError: null });
+      await this.refreshPendingCount();
+
     // Enforce data retention policy before syncing
-    await pruneOldLocalData();
+      await pruneOldLocalData();
 
-    const isOnline = await this.isOnline();
-    if (!isOnline) return;
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        updateSyncStatus({ inProgress: false, phase: 'offline' });
+        return { success: false, reason: 'offline' };
+      }
 
-    // Retry fetching trusted time if it failed earlier (e.g. during tunnel traversal)
-    if (!timeSynced) {
-      this.fetchTrustedTime().catch(() => {});
-    }
+      // Retry fetching trusted time if it failed earlier (e.g. during tunnel traversal)
+      if (!timeSynced) {
+        this.fetchTrustedTime().catch(() => {});
+      }
 
-    // Sync offline habits first
-    try {
+      const MAX_RETRIES = 8;
+
+      const shouldRetry = (item) => {
+        // Simple strings (like habitId for deletes) don't have retry objects yet
+        if (typeof item === 'string') return true; 
+        const retryCount = item.retryCount || 0;
+        if (retryCount >= MAX_RETRIES) return false;
+        
+        // If the user manually triggered a pull-to-refresh, bypass the backoff timer
+        if (reason === 'manual') return true;
+
+        const nextRetryAt = item.nextRetryAt ? new Date(item.nextRetryAt).getTime() : 0;
+        return Date.now() >= nextRetryAt;
+      };
+
+      const markFailure = (item, error, type) => {
+        const isPayloadLimit = error?.status === 400;
+        
+        if (error?.isPermanent && !isPayloadLimit) {
+          console.error(`[Telemetry] Permanent rejection (HTTP ${error.status}) for ${type} — dropping:`, error);
+          return null;
+        }
+        
+        // Wrap string items into objects for retry tracking if needed
+        const objItem = typeof item === 'string' ? { id: item, retryCount: 0 } : item;
+        
+        const retryCount = (objItem.retryCount || 0) + 1;
+        if (retryCount >= MAX_RETRIES) {
+          console.error(`[Telemetry] Permanent sync failure for ${type} after ${MAX_RETRIES} attempts. Dropping.`, error?.message || error);
+          return null; // Drop from queue
+        }
+        
+        // Exponential backoff: 2s, 4s, 8s, 16s... cap at 2 hours
+        const backoffMs = Math.min(Math.pow(2, retryCount) * 1000, 7200000);
+        const nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
+        
+        return { ...objItem, retryCount, nextRetryAt };
+      };
+
+      updateSyncStatus({ phase: 'syncing_habits' });
+      // Sync offline habits first
+      try {
       const localHabits = await getArrayStorage(LOCAL_HABITS_KEY);
       if (localHabits.length > 0) {
         const remainingHabits = [];
         let anySynced = false;
         
         for (const habit of localHabits) {
+          if (!shouldRetry(habit)) {
+            if ((habit.retryCount || 0) < MAX_RETRIES) remainingHabits.push(habit);
+            continue;
+          }
           try {
             // Check if it's already a UUID (just in case), local ones start with 'local-'
             if (habit.id && !habit.id.toString().startsWith('local-')) {
@@ -636,10 +897,12 @@ export const backendService = {
             if (res && !res.error) {
               anySynced = true;
             } else {
-              remainingHabits.push(habit);
+              const updatedItem = markFailure(habit, res, 'habit_create');
+              if (updatedItem) remainingHabits.push(updatedItem);
             }
-          } catch (_e) {
-            remainingHabits.push(habit);
+          } catch (e) {
+            const updatedItem = markFailure(habit, e, 'habit_create');
+            if (updatedItem) remainingHabits.push(updatedItem);
           }
         }
         
@@ -647,89 +910,97 @@ export const backendService = {
           await setArrayStorage(LOCAL_HABITS_KEY, remainingHabits);
         }
       }
-    } catch (e) {
+      } catch (e) {
       console.error('[Sync] Error syncing local habits:', e);
-    }
+      }
 
-    // Sync offline habit toggles
-    try {
-      const pendingToggles = await getArrayStorage(PENDING_HABIT_TOGGLES_KEY);
-      if (pendingToggles.length > 0) {
-        const remainingToggles = [];
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        for (const item of pendingToggles) {
-          try {
-            if (!session?.user?.id) throw new Error('No user');
-            
-            // Sync to habits table
-            const { error: updateError } = await supabase
-              .from('habits')
-              .update({ streak: item.streak, last_completed_at: item.lastCompletedAt })
-              .eq('id', item.id);
-              
-            if (updateError) throw updateError;
-            
-            // Sync to habit_logs
-            if (item.completed) {
-               await supabase
-                 .from('habit_logs')
-                 .insert({ habit_id: item.id, user_id: session.user.id, status: 'completed', created_at: item.lastCompletedAt });
-            } else {
-               const startOfDay = new Date();
-               startOfDay.setHours(0, 0, 0, 0);
-               await supabase
-                 .from('habit_logs')
-                 .delete()
-                 .eq('habit_id', item.id)
-                 .gte('created_at', startOfDay.toISOString());
+      updateSyncStatus({ phase: 'syncing_toggles' });
+      // Sync offline habit toggles
+      try {
+        const pendingToggles = await getArrayStorage(PENDING_HABIT_TOGGLES_KEY);
+        if (pendingToggles.length > 0) {
+          const remainingToggles = [];
+          const { data: { session } } = await supabase.auth.getSession();
+          const latestByHabitId = new Map();
+          for (const item of pendingToggles) {
+            const existing = latestByHabitId.get(item.id);
+            const currentTs = new Date(item.queuedAt || 0).getTime();
+            const existingTs = new Date(existing?.queuedAt || 0).getTime();
+            if (!existing || currentTs >= existingTs) {
+              latestByHabitId.set(item.id, item);
             }
-          } catch (_e) {
-            remainingToggles.push(item);
+          }
+          
+          for (const item of latestByHabitId.values()) {
+            if (!shouldRetry(item)) {
+              if ((item.retryCount || 0) < MAX_RETRIES) remainingToggles.push(item);
+              continue;
+            }
+            try {
+              if (!session?.user?.id) throw new Error('No user');
+              
+              // Sync to habits table
+              const { error: updateError } = await supabase
+                .from('habits')
+                .update({ streak: item.streak, last_completed_at: item.lastCompletedAt })
+                .eq('id', item.id);
+                
+              if (updateError) throw updateError;
+              
+              // Sync to habit_logs
+              if (item.completed) {
+                 const { error: insertError } = await supabase
+                   .from('habit_logs')
+                   .insert({ habit_id: item.id, user_id: session.user.id, status: 'completed', created_at: item.lastCompletedAt });
+                 if (insertError) throw insertError;
+              } else {
+                 const startOfDay = new Date();
+                 startOfDay.setHours(0, 0, 0, 0);
+                 const { error: deleteError } = await supabase
+                   .from('habit_logs')
+                   .delete()
+                   .eq('habit_id', item.id)
+                   .gte('created_at', startOfDay.toISOString());
+                 if (deleteError) throw deleteError;
+              }
+            } catch (e) {
+              const updatedItem = markFailure(item, e, 'habit_toggle');
+              if (updatedItem) remainingToggles.push(updatedItem);
+            }
+          }
+          await setArrayStorage(PENDING_HABIT_TOGGLES_KEY, remainingToggles);
+        }
+      } catch (e) {
+        console.error('[Sync] Error syncing habit toggles:', e);
+      }
+
+      updateSyncStatus({ phase: 'syncing_deletes' });
+      const pendingDeletes = await getArrayStorage(PENDING_HABIT_DELETES_KEY);
+      if (pendingDeletes.length > 0) {
+        const remainingDeletes = [];
+        for (const habitId of pendingDeletes) {
+          if (!shouldRetry(habitId)) {
+            const retryCount = typeof habitId === 'object' ? (habitId.retryCount || 0) : 0;
+            if (retryCount < MAX_RETRIES) remainingDeletes.push(habitId);
+            continue;
+          }
+          try {
+            const actualId = typeof habitId === 'object' ? habitId.id : habitId;
+            if (typeof actualId !== 'string' || actualId.startsWith('local-')) continue;
+            await supabase.from('habit_logs').delete().eq('habit_id', actualId);
+            const { error } = await supabase.from('habits').delete().eq('id', actualId);
+            if (error) throw error;
+          } catch (e) {
+            const updatedItem = markFailure(habitId, e, 'habit_delete');
+            if (updatedItem) remainingDeletes.push(updatedItem);
           }
         }
-        await setArrayStorage(PENDING_HABIT_TOGGLES_KEY, remainingToggles);
+        await setArrayStorage(PENDING_HABIT_DELETES_KEY, remainingDeletes);
       }
-    } catch (e) {
-      console.error('[Sync] Error syncing habit toggles:', e);
-    }
 
-    const MAX_RETRIES = 8;
-
-    const shouldRetry = (item) => {
-      const retryCount = item.retryCount || 0;
-      if (retryCount >= MAX_RETRIES) return false;
-      const nextRetryAt = item.nextRetryAt ? new Date(item.nextRetryAt).getTime() : 0;
-      return Date.now() >= nextRetryAt;
-    };
-
-    const markFailure = (item, error, type) => {
-      // 400 (Bad Request) could be a payload limit error from the backend.
-      // We treat it as transient if it looks like a limit issue, allowing chunking/retries to handle it.
-      const isPayloadLimit = error?.status === 400; // Backend returns 400 for exceeds limit
-      
-      if (error?.isPermanent && !isPayloadLimit) {
-        console.error(`[Telemetry] Permanent rejection (HTTP ${error.status}) for ${type} — dropping:`, error);
-        return null;
-      }
-      const retryCount = (item.retryCount || 0) + 1;
-      if (retryCount >= MAX_RETRIES) {
-        // Log to telemetry
-        Sentry.captureException(error, {
-          tags: { type, service: 'sync' },
-          extra: { item }
-        });
-        console.error(`[Telemetry] Permanent sync failure for ${type}:`, error);
-        return null; // Drop from queue
-      }
-      // Exponential backoff: 2^retryCount minutes (only for transient / network / limit errors)
-      const backoffMinutes = Math.pow(2, retryCount);
-      const nextRetryAt = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
-      return { ...item, retryCount, nextRetryAt };
-    };
-
-    const pendingMoods = await getArrayStorage(PENDING_MOODS_KEY);
-    if (pendingMoods.length > 0) {
+      updateSyncStatus({ phase: 'syncing_moods_metrics' });
+      const pendingMoods = await getArrayStorage(PENDING_MOODS_KEY);
+      if (pendingMoods.length > 0) {
       const remainingMoods = [];
       const moodsToSync = [];
       for (const item of pendingMoods) {
@@ -745,10 +1016,11 @@ export const backendService = {
         for (let i = 0; i < moodsToSync.length; i += CHUNK_SIZE) {
           const chunk = moodsToSync.slice(i, i + CHUNK_SIZE);
           try {
-            const payload = chunk.map(m => ({ 
+            const payload = chunk.map(m => ({
               mood: m.mood, 
               note: m.note, 
-              timestamp: m.queuedAt || new Date().toISOString() 
+              timestamp: m.queuedAt || new Date().toISOString(),
+              op_id: m.opId,
             }));
             await postMoodBulkOnline(payload);
           } catch (e) {
@@ -760,13 +1032,25 @@ export const backendService = {
         }
       }
       await setArrayStorage(PENDING_MOODS_KEY, remainingMoods);
-    }
+      }
 
-    const pendingMetrics = await getArrayStorage(PENDING_METRICS_KEY);
-    if (pendingMetrics.length > 0) {
+      const pendingMetrics = await getArrayStorage(PENDING_METRICS_KEY);
+      if (pendingMetrics.length > 0) {
       const remainingMetrics = [];
-      const metricsToSync = [];
+      
+      const latestByDate = new Map();
       for (const item of pendingMetrics) {
+        const date = new Date(item.queuedAt || Date.now()).toISOString().slice(0, 10);
+        const existing = latestByDate.get(date);
+        const currentTs = new Date(item.queuedAt || 0).getTime();
+        const existingTs = new Date(existing?.queuedAt || 0).getTime();
+        if (!existing || currentTs >= existingTs) {
+          latestByDate.set(date, item);
+        }
+      }
+
+      const metricsToSync = [];
+      for (const item of latestByDate.values()) {
         if (!shouldRetry(item)) {
           if ((item.retryCount || 0) < MAX_RETRIES) remainingMetrics.push(item);
           continue;
@@ -782,7 +1066,8 @@ export const backendService = {
             const payload = chunk.map(m => ({
               steps: m.steps,
               screen_time: m.screenTime,
-              date: new Date(m.queuedAt || Date.now()).toISOString().slice(0, 10)
+              date: new Date(m.queuedAt || Date.now()).toISOString().slice(0, 10),
+              op_id: m.opId,
             }));
             await postMetricsBulkOnline(payload);
           } catch (e) {
@@ -794,7 +1079,28 @@ export const backendService = {
         }
       }
       await setArrayStorage(PENDING_METRICS_KEY, remainingMetrics);
-    }
+      }
+
+      const pendingCount = await this.refreshPendingCount();
+      const lastSyncedAt = new Date().toISOString();
+      updateSyncStatus({
+        inProgress: false,
+        phase: pendingCount > 0 ? 'partially_synced' : 'idle',
+        lastSyncedAt,
+        lastError: null,
+      });
+      await persistSyncStatus();
+      return { success: true, reason, pendingCount, lastSyncedAt };
+    })().catch(async (error) => {
+      updateSyncStatus({ inProgress: false, phase: 'error', lastError: error?.message || 'Sync failed' });
+      await this.refreshPendingCount();
+      await persistSyncStatus();
+      throw error;
+    }).finally(() => {
+      syncPromise = null;
+    });
+
+    return syncPromise;
   },
 
   async getInsights() {
@@ -820,18 +1126,29 @@ export const backendService = {
 
   async logMood(mood, note) {
     if (typeof mood !== 'number') return null;
+    const operationId = createOperationId();
     try {
-      return await postMoodOnline(mood, note);
+      return await postMoodOnline(mood, note, operationId);
     } catch (error) {
       console.error('Error logging mood:', error);
-      await appendArrayStorage(PENDING_MOODS_KEY, { mood, note, queuedAt: new Date().toISOString() });
+      await appendArrayStorage(PENDING_MOODS_KEY, {
+        mood,
+        note,
+        opId: operationId,
+        queuedAt: new Date().toISOString(),
+        entityType: 'mood',
+        entityId: null,
+        payload: { mood, note: note || null },
+      });
+      await this.refreshPendingCount();
       return await saveMoodLocally(mood, note);
     }
   },
 
   async syncMetrics(steps, screenTime) {
+    const operationId = createOperationId();
     try {
-      return await postMetricsOnline(steps, screenTime);
+      return await postMetricsOnline(steps, screenTime, operationId);
     } catch (_backendError) {
       try {
         return await saveMetricsViaSupabase(steps, screenTime);
@@ -840,8 +1157,13 @@ export const backendService = {
         await appendArrayStorage(PENDING_METRICS_KEY, {
           steps,
           screenTime,
+          opId: operationId,
           queuedAt: new Date().toISOString(),
+          entityType: 'metrics',
+          entityId: new Date().toISOString().slice(0, 10),
+          payload: { steps, screenTime },
         });
+        await this.refreshPendingCount();
         return { success: false, queued: true };
       }
     }
@@ -880,8 +1202,24 @@ export const backendService = {
       completed,
       streak,
       lastCompletedAt,
-      queuedAt: new Date().toISOString()
+      queuedAt: new Date().toISOString(),
+      entityType: 'habit_toggle',
+      entityId: id,
+      payload: { completed, streak, lastCompletedAt: lastCompletedAt || null },
     });
+    await this.refreshPendingCount();
+  },
+
+  async queueHabitDelete(id) {
+    await appendArrayStorage(PENDING_HABIT_DELETES_KEY, {
+      id,
+      opId: createOperationId(),
+      queuedAt: new Date().toISOString(),
+      entityType: 'habit_delete',
+      entityId: id,
+      payload: { id },
+    });
+    await this.refreshPendingCount();
   },
 
   async deleteAccount() {
@@ -910,26 +1248,42 @@ export const backendService = {
           console.warn('[backendService] Could not clear MMKV storage, may be using fallback:', mmkvError);
         }
       }
-      
-      // 2. Clear AsyncStorage (Insights, Habits, Dashboard Cache, UI flags, and MMKV fallbacks)
+
+      // 2. Clear AsyncStorage (Insights, Habits, Dashboard Cache, UI flags, MMKV fallbacks)
       const keysToClear = [
         CACHED_INSIGHTS_KEY,
         LOCAL_HABITS_KEY,
         PENDING_HABIT_TOGGLES_KEY,
+        PENDING_HABIT_DELETES_KEY,
         HABIT_META_KEY,
         DASHBOARD_CACHE_KEY,
         HIDE_SYNC_CARD_KEY,
+        SYNC_STATUS_KEY,
+        '@NeuroHabit:WeeklyStepsHistory',
+        '@NeuroHabit:DailyStepsCache',
         `fallback_${LOCAL_MOOD_LOGS_KEY}`,
         `fallback_${PENDING_MOODS_KEY}`,
         `fallback_${PENDING_METRICS_KEY}`
       ];
       await AsyncStorage.multiRemove(keysToClear);
-      
-      // 3. Purge the encryption key from SecureStore to ensure a fresh start
+
+      // 3. Clear the remote habit cache (habitCacheService)
+      await clearHabitCache();
+
+      // 4. Purge the encryption key from SecureStore to ensure a fresh start
       await SecureStore.deleteItemAsync('mmkv_encryption_key');
       encryptedStorage = null;
-      
-      console.log('[backendService] Local user data purged successfully');
+
+      // 5. Reset the sync engine init flag so the next sign-in re-initialises cleanly
+      syncEngineInitialized = false;
+
+      updateSyncStatus({
+        inProgress: false,
+        phase: 'idle',
+        pendingCount: 0,
+        lastSyncedAt: null,
+        lastError: null,
+      });
     } catch (e) {
       console.error('[backendService] Failed to purge local data:', e);
     }

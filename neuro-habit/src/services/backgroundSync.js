@@ -14,6 +14,7 @@ TaskManager.defineTask(HEALTH_SYNC_TASK, async () => {
     
     if (steps > 0 || screenTime > 0) {
       await backendService.syncMetrics(steps, screenTime);
+      await backendService.syncPendingData({ reason: 'background_fetch' });
       await syncHistoricalStepsToSupabase();
       console.log('[BackgroundSync] Successfully synced metrics');
       return BackgroundFetch.BackgroundFetchResult.NewData;

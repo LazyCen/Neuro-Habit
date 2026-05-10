@@ -71,7 +71,8 @@
       "@sentry/react-native",
       "react-native-health-connect",
       "expo-audio",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-asset"
     ],
     "experiments": {
       "reactCompiler": true

@@ -10,11 +10,13 @@ class MoodLog(BaseModel):
     mood: int = Field(..., ge=1, le=10)
     note: Optional[str] = Field(None, max_length=1000)
     timestamp: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    op_id: Optional[str] = Field(None, max_length=120)
 
 class DailyMetrics(BaseModel):
     steps: int = Field(..., ge=0)
     screen_time: float = Field(..., ge=0.0) # hours
     date: datetime.date = Field(default_factory=datetime.date.today)
+    op_id: Optional[str] = Field(None, max_length=120)
 
 class Insight(BaseModel):
     text: str = Field(..., min_length=10, max_length=5000)

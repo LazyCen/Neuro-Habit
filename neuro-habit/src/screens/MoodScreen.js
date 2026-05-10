@@ -77,11 +77,10 @@ export default function MoodScreen() {
     const result = await backendService.logMood(selectedMood, fullNote);
     if (result) {
       if (result.offline) {
-        setModalConfig({
-          visible: true,
-          title: "Saved Offline",
-          message: "Mood logged locally. It will sync when your connection returns.",
-        });
+        // User is offline: show the inline success banner in amber/warning colour
+        // so they know it was saved and will sync — NOT an error modal.
+        setSuccessMessage(`${moodLabel} mood saved locally ☁️ It will sync when you\'re back online.`);
+        setTimeout(() => setSuccessMessage(""), 4500);
       } else {
         showSuccess(`${moodLabel} mood logged! 🎉`, moodLabel);
       }
@@ -95,7 +94,7 @@ export default function MoodScreen() {
       setModalConfig({
         visible: true,
         title: "Error",
-        message: "Failed to log mood. Backend might be offline.",
+        message: "Could not log your mood. Please try again.",
       });
     }
   };

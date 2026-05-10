@@ -1,5 +1,4 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { Alert } from 'react-native';
 import { supabase } from '../services/supabaseClient';
 import { backendService } from '../services/backendService';
 
@@ -8,8 +7,6 @@ const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  console.log('AuthProvider: Rendering with session:', session ? 'Active' : 'None');
 
   useEffect(() => {
     console.log('AuthProvider: Initializing auth state');
@@ -32,54 +29,25 @@ export const AuthProvider = ({ children }) => {
 
     }, 500);
 
-    // Test connection with deep diagnostics
-    const testConnection = async (retries = 3, delay = 2000) => {
+    // Silent diagnostic — does NOT alert the user if offline.
+    // Auth works offline via persisted SecureStore tokens; errors here are
+    // informational only for developers (visible in Sentry / Metro logs).
+    const testConnection = async () => {
       const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
       const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      
-      console.log('AuthContext: [Diagnostic] System Time:', new Date().toISOString());
-      console.log('AuthContext: [Diagnostic] Config:', { 
-        url: supabaseUrl ? 'Set' : 'Missing',
-        key: supabaseKey ? 'Set' : 'Missing' 
-      });
-
-      // 1. Check general internet connectivity first
-      try {
-        const netCheck = await fetch('https://8.8.8.8', { method: 'HEAD' }).catch(() => null);
-        if (!netCheck) {
-          console.warn('AuthContext: [Diagnostic] General internet check failed (8.8.8.8). Device may be offline or network is restricted.');
-        } else {
-          console.log('AuthContext: [Diagnostic] General internet check successful.');
-        }
-      } catch (e) {
-        console.warn('AuthContext: [Diagnostic] General internet check threw error:', e.message);
-      }
-
       if (!supabaseUrl || !supabaseKey) {
         console.error('AuthContext: Supabase environment variables are missing!');
         return;
       }
-
       try {
         const { error } = await supabase.from('habits').select('count', { count: 'exact', head: true });
-        
         if (error) {
-          console.error('AuthContext: Supabase connection test failed:', error.message);
-          
-          if (retries > 0 && (error.message.includes('Fetch') || error.message.includes('network') || error.message.includes('Network'))) {
-            console.log(`AuthContext: Retrying connection test in ${delay}ms... (${retries} attempts left)`);
-            setTimeout(() => testConnection(retries - 1, delay * 2), delay);
-          } else if (error.message.includes('Fetch') || error.message.includes('network') || error.message.includes('Network')) {
-            Alert.alert('Connection Error', 'Cannot reach Supabase. Please check your internet connection or if your network blocks Supabase.');
-          }
-        } else {
-          console.log('AuthContext: Supabase connection test successful');
+          // Log silently — do NOT alert; user may be offline intentionally
+          console.warn('AuthContext: [Diagnostic] Supabase connection check failed:', error.message);
         }
       } catch (err) {
-        console.error('AuthContext: Unexpected error during connection test:', err);
-        if (retries > 0) {
-          setTimeout(() => testConnection(retries - 1, delay * 2), delay);
-        }
+        // Network unavailable — completely expected in offline mode
+        console.warn('AuthContext: [Diagnostic] Offline or network restricted:', err?.message);
       }
     };
 
@@ -90,10 +58,7 @@ export const AuthProvider = ({ children }) => {
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      console.log('AuthContext: Auth state changed event:', _event);
-      
       if (session?.user?.user_metadata?.account_delete_requested) {
-        console.warn('AuthContext: Detected account in deletion state. Purging local data.');
         await signOut(true);
         setLoading(false);
         return;
@@ -102,14 +67,10 @@ export const AuthProvider = ({ children }) => {
       setSession(session);
       setLoading(false);
 
-      
       // If user was updated, re-fetch to get latest metadata
       if (_event === 'USER_UPDATED' && session?.user?.id) {
         supabase.auth.getSession().then(({ data: { session: freshSession } }) => {
-          if (freshSession) {
-            console.log('AuthContext: Refreshed session after user update');
-            setSession(freshSession);
-          }
+          if (freshSession) setSession(freshSession);
         });
       }
     });

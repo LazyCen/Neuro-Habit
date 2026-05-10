@@ -74,7 +74,7 @@ async function getSecureItemChunked(key) {
       }
       return fullString;
     }
-  } catch (e) {
+  } catch (_e) {
     // Not chunked JSON metadata, fallback to returning the raw string
   }
   
@@ -93,7 +93,7 @@ async function removeSecureItemChunked(key) {
           await SecureStore.deleteItemAsync(`${safeKey}_chunk_${i}`);
         }
       }
-    } catch (e) {
+    } catch (_e) {
       // Not chunked JSON metadata
     }
   }

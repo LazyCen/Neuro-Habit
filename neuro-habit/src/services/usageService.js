@@ -76,6 +76,9 @@ export async function resetHealthConnectStatus() {
 // ---------------------------------------------------------------------------
 // HC client init — singleton promise with re-init support
 // ---------------------------------------------------------------------------
+/** Delay (ms) to wait after HC initialize() before making API calls */
+let _hcInitSettleMs = 1200; // increased for slow-binding devices like Infinix
+
 async function getHealthConnectClient() {
   if (!HealthConnect || !isHealthConnectEnabled) return null;
 
@@ -92,8 +95,8 @@ async function getHealthConnectClient() {
       const initialized = await HealthConnect.initialize();
       console.log('[usageService] HealthConnect.initialize() result:', initialized);
       if (initialized) {
-        // Give the service a moment to fully bind before we call into it
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Give the service time to fully bind — some OEM devices are slow
+        await new Promise(resolve => setTimeout(resolve, _hcInitSettleMs));
         return HealthConnect;
       }
       return null;
@@ -169,12 +172,17 @@ async function readHCStepsOnce(client, startOfDay, now) {
       // If aggregate returned 0, it might be an empty bucket or a sync delay.
       // We'll proceed to Attempt B just in case.
     } catch (e) {
+      if (e.isBindingError) {
+        // Propagate binding error immediately — no point trying readRecords
+        // since the service connection is already broken.
+        throw e;
+      }
       console.warn(`[Steps] HC aggregateRecord failed (${e.message}). Falling back to readRecords...`);
-      // Do not throw here, let it try readRecords first.
+      // Non-binding error — try readRecords before giving up
     }
   }
 
-  // Attempt B: readRecords (fallback if aggregate is 0 or missing)
+  // Attempt B: readRecords (fallback if aggregate is 0 or had non-binding error)
   if (typeof client.readRecords === 'function') {
     try {
       const result = await safeNativeCall(() => client.readRecords('Steps', {
@@ -559,11 +567,18 @@ export const usageService = {
           if (e.isBindingError) {
             _hcBindingErrorCount++;
             _hcInitPromise = null; // force re-init on the next attempt
-            // Runtime evidence shows retries/re-inits do not recover from this
-            // native binding failure in-session; fail fast to fallback.
-            console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
-            isHealthConnectEnabled = false;
-            break;
+            // Add a short backoff between re-init attempts to let the OS recover
+            if (_hcBindingErrorCount < HC_MAX_BINDING_ERRORS) {
+              const backoffMs = _hcBindingErrorCount * 800;
+              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} — waiting ${backoffMs}ms before retry...`);
+              await new Promise(resolve => setTimeout(resolve, backoffMs));
+              // Increase settle time for next init attempt
+              _hcInitSettleMs = Math.min(_hcInitSettleMs + 500, 3000);
+            } else {
+              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
+              isHealthConnectEnabled = false;
+              break;
+            }
           } else {
             console.warn('[Steps] HC read error (non-binding):', e.message);
             break; // Non-binding error, stop trying

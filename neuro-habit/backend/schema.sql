@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS mood_logs (
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
   mood_score INTEGER CHECK (mood_score >= 1 AND mood_score <= 10),
   note TEXT CHECK (char_length(note) <= 1000),
-  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  client_op_id TEXT
 );
 
 -- Daily Metrics Table
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
   steps INTEGER DEFAULT 0 CHECK (steps >= 0),
   screen_time FLOAT DEFAULT 0.0 CHECK (screen_time >= 0.0),
   date DATE DEFAULT CURRENT_DATE,
+  last_client_op_id TEXT,
   UNIQUE(user_id, date)
 );
 
@@ -66,8 +68,13 @@ CREATE TABLE IF NOT EXISTS ai_insights (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Forward-compatible migrations for existing databases
+ALTER TABLE mood_logs ADD COLUMN IF NOT EXISTS client_op_id TEXT;
+ALTER TABLE daily_metrics ADD COLUMN IF NOT EXISTS last_client_op_id TEXT;
+
 -- Indexes for Performance
 CREATE INDEX IF NOT EXISTS idx_mood_logs_user_timestamp ON mood_logs (user_id, timestamp DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mood_logs_user_client_op_unique ON mood_logs (user_id, client_op_id) WHERE client_op_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_habit_logs_user_created ON habit_logs (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_habit_logs_user_id_created_at ON habit_logs (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits (user_id);

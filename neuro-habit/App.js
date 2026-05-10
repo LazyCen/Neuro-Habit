@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from "./src/navigation/RootNavigator";
 import { AuthProvider } from "./src/context/AuthContext";
 import { ThemeProvider, useTheme } from "./src/context/ThemeContext";
+import { NetworkProvider } from "./src/context/NetworkContext";
 import { notificationService } from "./src/services/notificationService";
 import { backendService } from "./src/services/backendService";
 import { registerBackgroundHealthSync } from "./src/services/backgroundSync";
@@ -63,7 +64,11 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AuthProvider>
-            <NavigationWrapper />
+            {/* NetworkProvider must be inside AuthProvider so network-triggered
+                syncs have access to the current Supabase session. */}
+            <NetworkProvider>
+              <NavigationWrapper />
+            </NetworkProvider>
           </AuthProvider>
         </ThemeProvider>
       </SafeAreaProvider>

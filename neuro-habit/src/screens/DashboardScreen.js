@@ -8,6 +8,7 @@ import Card from "../components/Card";
 import HealthPermissionModal from "../components/HealthPermissionModal";
 import useDashboard from "../hooks/useDashboard";
 import { usageService } from "../services/usageService";
+import { backendService } from "../services/backendService";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabaseClient";
@@ -17,7 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export default function DashboardScreen() {
   const { theme: colors } = useTheme();
   const themedStyles = styles(colors);
-  const { data, loading, isRefreshingData, isOfflineMode, refresh } = useDashboard();
+  const { data, loading, isRefreshingData, isOfflineMode, refresh, syncStatus } = useDashboard();
   const { session } = useAuth();
 
   const [hasUsagePerm, setHasUsagePerm] = React.useState(true);
@@ -48,6 +49,10 @@ export default function DashboardScreen() {
     lastRefreshRef.current = now;
     refresh();
   }, [refresh]);
+
+  const handleRetrySync = React.useCallback(() => {
+    backendService.forceSyncNow().catch(() => {});
+  }, []);
 
   React.useEffect(() => {
     if (isRefreshingData) {
@@ -269,6 +274,30 @@ export default function DashboardScreen() {
                 <Ionicons name="sync-outline" size={12} color={colors.primary} />
                 <Text style={themedStyles.updatingText}>Updating...</Text>
               </Animated.View>
+            )}
+            {!!syncStatus?.pendingCount && (
+              <View style={[themedStyles.updatingBadge, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "40" }]}>
+                <Ionicons name="cloud-upload-outline" size={12} color={colors.warning} />
+                <Text style={[themedStyles.updatingText, { color: colors.warning }]}>
+                  {syncStatus.pendingCount} pending change{syncStatus.pendingCount === 1 ? '' : 's'}
+                </Text>
+              </View>
+            )}
+            {!!syncStatus?.lastSyncedAt && (
+              <Text style={[themedStyles.syncSubtext, { marginTop: 6, marginBottom: 0 }]}>
+                Last synced: {new Date(syncStatus.lastSyncedAt).toLocaleTimeString()}
+              </Text>
+            )}
+            {(syncStatus?.pendingCount > 0 || syncStatus?.lastError) && (
+              <TouchableOpacity
+                onPress={handleRetrySync}
+                disabled={Boolean(syncStatus?.inProgress)}
+                style={{ marginTop: 8, alignSelf: 'flex-start', opacity: syncStatus?.inProgress ? 0.6 : 1 }}
+              >
+                <Text style={[themedStyles.updatingText, { marginLeft: 0 }]}>
+                  {syncStatus?.inProgress ? 'Syncing...' : 'Retry Sync'}
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
           <View style={themedStyles.avatarPlaceholder}>

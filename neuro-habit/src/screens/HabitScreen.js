@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, Pressable } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, Pressable, ActivityIndicator } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -9,6 +9,7 @@ import { backendService } from "../services/backendService";
 import { notificationService } from "../services/notificationService";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
+import { useNetwork } from "../context/NetworkContext";
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withSequence, withTiming } from "react-native-reanimated";
 import PremiumBackground from "../components/PremiumBackground";
 import { supabase } from "../services/supabaseClient";
@@ -16,6 +17,7 @@ import AppMessageModal from "../components/AppMessageModal";
 import * as Haptics from 'expo-haptics';
 import { getFriendlyErrorMessage } from "../utils/errorMapper";
 import Swipeable from "react-native-gesture-handler/Swipeable";
+import { saveHabitCache, getHabitCache } from "../services/habitCacheService";
 
 const LOCAL_HABITS_KEY = "local_habits_v1";
 const HABIT_META_KEY = "habit_meta_v2";
@@ -23,8 +25,10 @@ const HABIT_META_KEY = "habit_meta_v2";
 export default function HabitScreen() {
   const { theme: colors } = useTheme();
   const { session } = useAuth();
+  const { isConnected } = useNetwork();
   const [habits, setHabits] = useState([]);
   const [newHabit, setNewHabit] = useState("");
+  const [isLoadingHabits, setIsLoadingHabits] = useState(true);
   const [modalConfig, setModalConfig] = useState({ 
     visible: false, 
     title: "", 
@@ -142,8 +146,23 @@ export default function HabitScreen() {
   };
 
   const loadHabits = React.useCallback(async () => {
+    setIsLoadingHabits(true);
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user?.id) return;
+    if (!session?.user?.id) {
+      setIsLoadingHabits(false);
+      return;
+    }
+
+    // --- Seed from cache immediately so the list isn't blank while loading ---
+    const cachedRemote = await getHabitCache();
+    const localHabitsInitial = await getLocalHabits();
+    if (cachedRemote.length > 0 || localHabitsInitial.length > 0) {
+      const metaMapInitial = await getHabitMeta();
+      const seedAll = [...cachedRemote, ...localHabitsInitial.filter(h => !cachedRemote.find(r => r.id === h.id))];
+      const seedResult = processHabitsWithMeta(seedAll, metaMapInitial);
+      setHabits(seedResult.processed);
+      setIsLoadingHabits(false);
+    }
 
     // Trigger a sync for any pending offline habits or metrics
     backendService.syncPendingData().catch(() => {});
@@ -151,66 +170,86 @@ export default function HabitScreen() {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
-    const [remoteRes, logsRes, localHabits, metaMap] = await Promise.all([
-      supabase
-        .from("habits")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("habit_logs")
-        .select("habit_id")
-        .eq("user_id", session.user.id)
-        .gte("created_at", startOfDay.toISOString()),
-      getLocalHabits(),
-      getHabitMeta()
-    ]);
+    try {
+      const [remoteRes, logsRes, localHabits, metaMap] = await Promise.all([
+        supabase
+          .from("habits")
+          .select("*")
+          .eq("user_id", session.user.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("habit_logs")
+          .select("habit_id")
+          .eq("user_id", session.user.id)
+          .gte("created_at", startOfDay.toISOString()),
+        getLocalHabits(),
+        getHabitMeta()
+      ]);
 
-    const { data, error } = remoteRes;
-    const completedHabitIds = new Set((logsRes.data || []).map(log => log.habit_id));
-    let allHabits = [];
-    const activeHabitIds = new Set();
+      const { data, error } = remoteRes;
+      const completedHabitIds = new Set((logsRes.data || []).map(log => log.habit_id));
+      let allHabits = [];
+      const activeHabitIds = new Set();
 
-    if (!error && Array.isArray(data)) {
-      const remoteHabits = data.map((habit) => {
-        activeHabitIds.add(habit.id);
-        return {
-          id: habit.id,
-          name: habit.name ?? habit.title ?? "Untitled Habit",
-          completed: completedHabitIds.has(habit.id),
-          streak: habit.streak || 0,
-          lastCompletedAt: habit.last_completed_at || null,
-          localOnly: false,
-        };
-      });
-      allHabits = [...remoteHabits, ...localHabits];
-      localHabits.forEach(h => activeHabitIds.add(h.id));
-    } else {
-      allHabits = localHabits;
-      localHabits.forEach(h => activeHabitIds.add(h.id));
-    }
+      if (!error && Array.isArray(data)) {
+        const remoteHabits = data.map((habit) => {
+          activeHabitIds.add(habit.id);
+          return {
+            id: habit.id,
+            name: habit.name ?? habit.title ?? "Untitled Habit",
+            completed: completedHabitIds.has(habit.id),
+            streak: habit.streak || 0,
+            lastCompletedAt: habit.last_completed_at || null,
+            localOnly: false,
+          };
+        });
+        allHabits = [...remoteHabits, ...localHabits];
+        localHabits.forEach(h => activeHabitIds.add(h.id));
 
-    // Data retention policy: Purge habit metadata (streaks/history) that's > 30 days old or orphaned
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    let metaChanged = false;
-    for (const [habitId, meta] of Object.entries(metaMap)) {
-      const isOrphaned = !error && !activeHabitIds.has(habitId);
-      const isStale = meta.lastCompletedAt && new Date(meta.lastCompletedAt).getTime() < thirtyDaysAgo;
-      
-      if (isOrphaned || isStale) {
-        delete metaMap[habitId];
-        metaChanged = true;
+        // Persist remote habits to cache for future offline loads
+        saveHabitCache(remoteHabits).catch(() => {});
+      } else {
+        // Network error — use the cache we already seeded + local habits
+        const cached = await getHabitCache();
+        allHabits = [...cached, ...localHabits.filter(h => !cached.find(c => c.id === h.id))];
+        localHabits.forEach(h => activeHabitIds.add(h.id));
+        cached.forEach(h => activeHabitIds.add(h.id));
+        if (error) {
+          console.warn('[HabitScreen] Remote fetch failed, using cache:', error.message);
+        }
       }
-    }
 
-    const processResult = processHabitsWithMeta(allHabits, metaMap);
-    
-    if (metaChanged || processResult.metaChanged) {
-      await setHabitMeta(metaMap);
-    }
+      // Data retention policy: Purge habit metadata older than 30 days or orphaned
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      let metaChanged = false;
+      for (const [habitId, meta] of Object.entries(metaMap)) {
+        const isOrphaned = !remoteRes.error && !activeHabitIds.has(habitId);
+        const isStale = meta.lastCompletedAt && new Date(meta.lastCompletedAt).getTime() < thirtyDaysAgo;
+        if (isOrphaned || isStale) {
+          delete metaMap[habitId];
+          metaChanged = true;
+        }
+      }
 
-    setHabits(processResult.processed);
-    await syncStreakReminder(processResult.processed);
+      const processResult = processHabitsWithMeta(allHabits, metaMap);
+      if (metaChanged || processResult.metaChanged) {
+        await setHabitMeta(metaMap);
+      }
+
+      setHabits(processResult.processed);
+      await syncStreakReminder(processResult.processed);
+    } catch (fetchError) {
+      // Unexpected error — ensure we at least show cached + local data
+      console.warn('[HabitScreen] Unexpected error loading habits:', fetchError?.message);
+      const cached = await getHabitCache();
+      const localHabits = await getLocalHabits();
+      const metaMap = await getHabitMeta();
+      const fallback = [...cached, ...localHabits.filter(h => !cached.find(c => c.id === h.id))];
+      const processResult = processHabitsWithMeta(fallback, metaMap);
+      setHabits(processResult.processed);
+    } finally {
+      setIsLoadingHabits(false);
+    }
   }, [syncStreakReminder]);
 
   const toggleHabit = (id) => {
@@ -412,13 +451,14 @@ export default function HabitScreen() {
            const localHabits = await getLocalHabits();
            await setLocalHabits(localHabits.filter(h => h.id !== id));
         } else {
-           // Explicitly delete associated logs first
-           await supabase.from('habit_logs').delete().eq('habit_id', id);
-
-           const { error } = await supabase.from('habits').delete().eq('id', id);
-           if (error) {
-             console.error("Error deleting habit:", error);
-             loadHabits(); // Restore state if failed
+           try {
+             // Explicitly delete associated logs first
+             await supabase.from('habit_logs').delete().eq('habit_id', id);
+             const { error } = await supabase.from('habits').delete().eq('id', id);
+             if (error) throw error;
+           } catch (error) {
+             console.warn("Remote delete failed, queuing for sync:", error?.message);
+             await backendService.queueHabitDelete(id);
            }
         }
       }
@@ -439,7 +479,15 @@ export default function HabitScreen() {
         onCancel={modalConfig.onCancel}
       />
       <View style={themedStyles.container}>
-        <Text style={themedStyles.title}>Habit Tracking</Text>
+        <View style={themedStyles.titleRow}>
+          <Text style={themedStyles.title}>Habit Tracking</Text>
+          {isConnected === false && (
+            <View style={themedStyles.offlineChip}>
+              <Ionicons name="cloud-offline-outline" size={11} color={colors.warning || '#f59e0b'} />
+              <Text style={[themedStyles.offlineChipText, { color: colors.warning || '#f59e0b' }]}>Offline</Text>
+            </View>
+          )}
+        </View>
         
         <View style={themedStyles.inputContainer}>
           <TextInput
@@ -460,11 +508,18 @@ export default function HabitScreen() {
           keyExtractor={item => item.id}
           contentContainerStyle={themedStyles.list}
           ListEmptyComponent={
-            <View style={themedStyles.emptyState}>
-              <Ionicons name="list-outline" size={26} color={colors.subtext} />
-              <Text style={themedStyles.emptyStateTitle}>No habits yet</Text>
-              <Text style={themedStyles.emptyStateText}>Add your first habit above to get started.</Text>
-            </View>
+            isLoadingHabits ? (
+              <View style={themedStyles.emptyState}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={themedStyles.emptyStateText}>Loading habits…</Text>
+              </View>
+            ) : (
+              <View style={themedStyles.emptyState}>
+                <Ionicons name="list-outline" size={26} color={colors.subtext} />
+                <Text style={themedStyles.emptyStateTitle}>No habits yet</Text>
+                <Text style={themedStyles.emptyStateText}>Add your first habit above to get started.</Text>
+              </View>
+            )
           }
         />
       </View>
@@ -554,6 +609,29 @@ const styles = (colors) => StyleSheet.create({
     color: colors.text,
     marginBottom: 24,
     marginTop: 20,
+    flex: 1,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+    marginTop: 20,
+  },
+  offlineChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: (colors.warning || '#f59e0b') + '18',
+    borderColor: (colors.warning || '#f59e0b') + '40',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 20,
+    marginLeft: 10,
+    gap: 4,
+  },
+  offlineChipText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   inputContainer: {
     flexDirection: "row",

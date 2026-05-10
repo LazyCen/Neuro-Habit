@@ -1,7 +1,7 @@
 import asyncio
 from tenacity import retry, stop_after_attempt, wait_exponential
 from fastapi import APIRouter, Depends, Request, HTTPException, BackgroundTasks
-from typing import List
+from typing import List, Optional
 from supabase import Client
 import datetime
 import utils
@@ -12,6 +12,15 @@ from services.db_service import check_supabase_response
 
 router = APIRouter()
 MAX_BULK_ITEMS = 100
+
+def _extract_operation_id(request: Request) -> Optional[str]:
+    op_id = request.headers.get("x-operation-id")
+    if not op_id:
+        return None
+    trimmed = op_id.strip()
+    if not trimmed:
+        return None
+    return trimmed[:120]
 
 
 import time
@@ -104,7 +113,26 @@ async def create_habit(request: Request, habit: Habit, user=Depends(get_current_
 @router.post("/mood")
 @limiter.limit(LIMIT_WRITE)
 async def log_mood(request: Request, log: MoodLog, user=Depends(get_current_user), client: Client = Depends(get_user_client)):
-    data = {"user_id": user.id, "mood_score": log.mood, "note": log.note, "timestamp": log.timestamp.isoformat()}
+    operation_id = log.op_id or _extract_operation_id(request)
+    if operation_id:
+        existing = check_supabase_response(
+            client.table("mood_logs")
+            .select("*")
+            .eq("user_id", user.id)
+            .eq("client_op_id", operation_id)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            return existing.data[0]
+
+    data = {
+        "user_id": user.id,
+        "mood_score": log.mood,
+        "note": log.note,
+        "timestamp": log.timestamp.isoformat(),
+        "client_op_id": operation_id,
+    }
     response = check_supabase_response(client.table("mood_logs").insert(data).execute())
     return response.data[0] if response.data else {"status": "error"}
 
@@ -116,14 +144,30 @@ async def log_mood_bulk(request: Request, logs: List[MoodLog], user=Depends(get_
     if len(logs) > MAX_BULK_ITEMS:
         raise HTTPException(status_code=400, detail=f"Bulk request exceeds limit of {MAX_BULK_ITEMS} items.")
 
-    data = [{"user_id": user.id, "mood_score": log.mood, "note": log.note, "timestamp": log.timestamp.isoformat()} for log in logs]
+    data = [
+        {
+            "user_id": user.id,
+            "mood_score": log.mood,
+            "note": log.note,
+            "timestamp": log.timestamp.isoformat(),
+            "client_op_id": (log.op_id[:120] if log.op_id else None),
+        }
+        for log in logs
+    ]
     response = check_supabase_response(client.table("mood_logs").insert(data).execute())
     return response.data if response.data else {"status": "error"}
 
 @router.post("/metrics")
 @limiter.limit(LIMIT_WRITE)
 async def update_metrics(request: Request, metrics: DailyMetrics, user=Depends(get_current_user), client: Client = Depends(get_user_client)):
-    data = {"user_id": user.id, "steps": metrics.steps, "screen_time": metrics.screen_time, "date": metrics.date.isoformat()}
+    operation_id = metrics.op_id or _extract_operation_id(request)
+    data = {
+        "user_id": user.id,
+        "steps": metrics.steps,
+        "screen_time": metrics.screen_time,
+        "date": metrics.date.isoformat(),
+        "last_client_op_id": operation_id,
+    }
     response = check_supabase_response(client.table("daily_metrics").upsert(data, on_conflict="user_id,date").execute())
     return response.data[0] if response.data else {"status": "error"}
 
@@ -135,7 +179,16 @@ async def update_metrics_bulk(request: Request, metrics_list: List[DailyMetrics]
     if len(metrics_list) > MAX_BULK_ITEMS:
         raise HTTPException(status_code=400, detail=f"Bulk request exceeds limit of {MAX_BULK_ITEMS} items.")
 
-    data = [{"user_id": user.id, "steps": metrics.steps, "screen_time": metrics.screen_time, "date": metrics.date.isoformat()} for metrics in metrics_list]
+    data = [
+        {
+            "user_id": user.id,
+            "steps": metrics.steps,
+            "screen_time": metrics.screen_time,
+            "date": metrics.date.isoformat(),
+            "last_client_op_id": (metrics.op_id[:120] if metrics.op_id else None),
+        }
+        for metrics in metrics_list
+    ]
     response = check_supabase_response(client.table("daily_metrics").upsert(data, on_conflict="user_id,date").execute())
     return response.data if response.data else {"status": "error"}
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { fetchUserData } from "../services/api";
 import { generateInsights } from "../services/aiEngine";
 import { backendService } from "../services/backendService";
+import { useNetwork } from "../context/NetworkContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const DASHBOARD_CACHE_KEY = "dashboard_data_cache_v1";
@@ -16,16 +17,23 @@ const DEFAULT_DASHBOARD_DATA = {
 };
 
 export default function useDashboard() {
+  const { isConnected } = useNetwork();
   const [data, setData] = useState(null);
   const [insights, setInsights] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshingData, setIsRefreshingData] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(backendService.getSyncStatus());
 
   // Guard: prevents state updates after unmount
   const mountedRef = useRef(true);
   // Tracks the AbortController for the most recent load call
   const loadControllerRef = useRef(null);
+  // Always-fresh ref to isConnected so the load callback doesn't need it as a dep
+  const isConnectedRef = useRef(isConnected);
+  isConnectedRef.current = isConnected;
+  // Track previous connectivity to detect offline→online transition
+  const prevIsConnectedRef = useRef(isConnected);
 
   const load = useCallback(async () => {
     // Cancel any previously running load
@@ -80,11 +88,12 @@ export default function useDashboard() {
           if (controller.signal.aborted) return;
           if (cachedInsights.length > 0) safeSet(setInsights)(cachedInsights);
 
-          const isOnline = await backendService.isOnline();
+          // Use the ref so the callback doesn't need isConnected as a dep
+          const networkIsOnline = isConnectedRef.current !== false;
           if (controller.signal.aborted) return;
 
           let aiInsights = cachedInsights;
-          if (isOnline) {
+          if (networkIsOnline) {
             try {
               const freshInsights = await backendService.getInsights();
               if (controller.signal.aborted) return;
@@ -125,16 +134,46 @@ export default function useDashboard() {
 
   useEffect(() => {
     mountedRef.current = true;
+    backendService.initializeSyncEngine().catch(() => {});
+    const unsubscribe = backendService.subscribeToSyncStatus((status) => {
+      if (!mountedRef.current) return;
+      setSyncStatus(status);
+    });
     load();
 
     return () => {
       // Mark as unmounted and abort any in-flight load
       mountedRef.current = false;
+      unsubscribe();
       if (loadControllerRef.current) {
         loadControllerRef.current.abort();
       }
     };
   }, [load]);
 
-  return { data, insights, loading, isRefreshingData, isOfflineMode, refresh: load };
+  // When we transition from offline → online, sync pending data and reload
+  useEffect(() => {
+    const prevConnected = prevIsConnectedRef.current;
+    prevIsConnectedRef.current = isConnected;
+
+    const justReconnected = prevConnected === false && isConnected === true;
+    if (!justReconnected) return;
+
+    // Flush the pending queue first, then reload the dashboard
+    backendService.syncPendingData({ reason: 'dashboard_reconnect' })
+      .catch(() => {})
+      .finally(() => {
+        if (mountedRef.current) load();
+      });
+  }, [isConnected, load]);
+
+  return {
+    data,
+    insights,
+    loading,
+    isRefreshingData,
+    isOfflineMode,
+    refresh: load,
+    syncStatus,
+  };
 }
