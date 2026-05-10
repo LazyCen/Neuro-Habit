@@ -11,7 +11,6 @@ import Card from "../components/Card";
 import PremiumBackground from "../components/PremiumBackground";
 import { fetchWeeklyStepTrend } from "../services/api";
 import { usageService } from "../services/usageService";
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Lazy load heavy chart library to optimize initial bundle size
 const AdvancedChart = React.lazy(() => import("../components/AdvancedChart"));
@@ -35,18 +34,10 @@ export default function InsightsScreen() {
   React.useEffect(() => {
     const startLiveSteps = async () => {
       try {
-        let baseline = 0;
-        try {
-          const raw = await AsyncStorage.getItem('@NeuroHabit:DailyStepsCache');
-          if (raw) {
-            const { date, steps } = JSON.parse(raw);
-            const todayKey = new Date().toISOString().slice(0, 10);
-            if (date === todayKey && Number.isFinite(steps)) baseline = steps;
-          }
-        } catch (_e) {}
-
-        const sub = usageService.watchLiveSteps((stepsDelta) => {
-          const total = baseline + stepsDelta;
+        // watchLiveSteps already returns (_baseStepCount + _liveStepAccumulator)
+        // internally — do NOT add a separate baseline here or steps will be
+        // double-counted, causing inflated and then resetting step counts.
+        const sub = usageService.watchLiveSteps((total) => {
           setLiveSteps(total >= 5 ? total : 0);
         });
         liveStepSubscriptionRef.current = sub;

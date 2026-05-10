@@ -600,7 +600,9 @@ export const usageService = {
 
     // Return a synthetic subscription that polls _liveStepAccumulator
     // and fires the callback whenever the value changes.
-    let lastReported = _liveStepAccumulator;
+    // Seed with the same expression used inside the interval so the very first
+    // poll does not always fire a spurious "change" event.
+    let lastReported = _baseStepCount + _liveStepAccumulator;
     const interval = setInterval(() => {
       const current = _baseStepCount + _liveStepAccumulator;
       if (current !== lastReported) {

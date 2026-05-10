@@ -81,20 +81,12 @@ export default function DashboardScreen() {
       try {
         // Request pedometer permission first
         await usageService.requestPedometerPermission();
-        // Seed baseline from cached daily steps so pedometer adds on top
-        let baseline = 0;
-        try {
-          const raw = await AsyncStorage.getItem('@NeuroHabit:DailyStepsCache');
-          if (raw) {
-            const { date, steps } = JSON.parse(raw);
-            const todayKey = new Date().toISOString().slice(0, 10);
-            if (date === todayKey && Number.isFinite(steps)) baseline = steps;
-          }
-        } catch (_e) {}
 
-        const sub = usageService.watchLiveSteps((stepsDelta) => {
-          // stepsDelta = base + live accumulator; filter out single-step sensor noise
-          const total = baseline + stepsDelta;
+        // watchLiveSteps already returns (_baseStepCount + _liveStepAccumulator)
+        // internally — do NOT add a separate baseline here or steps will be
+        // double-counted, causing the "284 → 184" reset bug.
+        const sub = usageService.watchLiveSteps((total) => {
+          // total = _baseStepCount + _liveStepAccumulator from usageService
           setLiveSteps(total >= 5 ? total : 0);
         });
         liveStepSubscriptionRef.current = sub;
