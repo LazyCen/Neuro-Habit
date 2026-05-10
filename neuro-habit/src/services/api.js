@@ -8,6 +8,8 @@ const DAILY_STEPS_CACHE_KEY = '@NeuroHabit:DailyStepsCache';
 // Kept for up to 14 days so weekly boundaries are always covered.
 const WEEKLY_STEPS_HISTORY_KEY = '@NeuroHabit:WeeklyStepsHistory';
 const HISTORY_RETENTION_DAYS = 14;
+const UPSERT_DEDUPE_WINDOW_MS = 30 * 1000;
+const _lastUpsertByDate = new Map();
 const DEFAULT_DASHBOARD_DATA = {
   steps: 0,
   screenTime: 0,
@@ -95,14 +97,24 @@ async function recordTodaySteps(steps) {
  * Only the columns that have meaningful values are updated — a zero screen-time
  * never overwrites a valid stored value.
  */
-async function upsertDailyMetricsToSupabase({ date, steps, screenTime, userId }) {
+async function upsertDailyMetricsToSupabase({ date, steps, screenTime, userId, source = 'unknown' }) {
   if (!userId) return;
   if ((!Number.isFinite(steps) || steps <= 0) && (!Number.isFinite(screenTime) || screenTime <= 0)) return;
+  const targetDate = date || new Date().toISOString().slice(0, 10);
+  const normalizedSteps = Number.isFinite(steps) && steps > 0 ? Math.round(steps) : 0;
+  const normalizedScreenTime = Number.isFinite(screenTime) && screenTime > 0 ? Number(screenTime.toFixed(2)) : 0;
+  const nextSig = `${normalizedSteps}|${normalizedScreenTime}`;
+  const nowMs = Date.now();
+  const last = _lastUpsertByDate.get(targetDate);
+  if (last && last.sig === nextSig && (nowMs - last.at) < UPSERT_DEDUPE_WINDOW_MS) {
+    return;
+  }
+  _lastUpsertByDate.set(targetDate, { sig: nextSig, at: nowMs });
 
   try {
     const payload = {
       user_id: userId,
-      date: date || new Date().toISOString().slice(0, 10),
+      date: targetDate,
       ...(Number.isFinite(steps) && steps > 0 ? { steps } : {}),
       ...(Number.isFinite(screenTime) && screenTime > 0 ? { screen_time: screenTime } : {}),
     };
@@ -129,11 +141,13 @@ async function upsertDailyMetricsToSupabase({ date, steps, screenTime, userId })
 async function backfillSupabaseFromLocalHistory(localHistory, userId, stepMap) {
   if (!userId) return;
   const entries = Object.entries(localHistory);
+  const todayKey = new Date().toISOString().slice(0, 10);
   for (const [date, steps] of entries) {
+    if (date === todayKey) continue; // today's value is handled by fetchUserData path
     const dbSteps = stepMap.has(date) ? stepMap.get(date) : 0;
     if (steps > 0 && steps > dbSteps) {
       // Fire-and-forget individual upserts; errors are swallowed
-      upsertDailyMetricsToSupabase({ date, steps, userId }).catch(() => {});
+      upsertDailyMetricsToSupabase({ date, steps, userId, source: 'backfill' }).catch(() => {});
     }
   }
 }
@@ -294,6 +308,7 @@ export async function fetchUserData() {
         steps: dailySteps,
         screenTime: screenTime || 0,
         userId,
+        source: 'fetchUserData',
       }).catch(() => {});
     }
 

@@ -39,6 +39,68 @@ function isSensitiveKey(key) {
   return SECURE_KEY_PATTERNS.some((pattern) => pattern.test(key));
 }
 
+const CHUNK_SIZE = 1000;
+
+async function setSecureItemChunked(key, value) {
+  const safeKey = sanitiseKey(key);
+  if (value.length <= CHUNK_SIZE) {
+    await SecureStore.setItemAsync(safeKey, value);
+    return;
+  }
+  
+  const chunkCount = Math.ceil(value.length / CHUNK_SIZE);
+  const metadata = JSON.stringify({ _isChunked: true, chunkCount });
+  await SecureStore.setItemAsync(safeKey, metadata);
+  
+  for (let i = 0; i < chunkCount; i++) {
+    const chunk = value.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    await SecureStore.setItemAsync(`${safeKey}_chunk_${i}`, chunk);
+  }
+}
+
+async function getSecureItemChunked(key) {
+  const safeKey = sanitiseKey(key);
+  const value = await SecureStore.getItemAsync(safeKey);
+  
+  if (!value) return null;
+  
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && parsed._isChunked) {
+      let fullString = '';
+      for (let i = 0; i < parsed.chunkCount; i++) {
+        const chunk = await SecureStore.getItemAsync(`${safeKey}_chunk_${i}`);
+        if (chunk) fullString += chunk;
+      }
+      return fullString;
+    }
+  } catch (e) {
+    // Not chunked JSON metadata, fallback to returning the raw string
+  }
+  
+  return value;
+}
+
+async function removeSecureItemChunked(key) {
+  const safeKey = sanitiseKey(key);
+  const value = await SecureStore.getItemAsync(safeKey);
+  
+  if (value) {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && parsed._isChunked) {
+        for (let i = 0; i < parsed.chunkCount; i++) {
+          await SecureStore.deleteItemAsync(`${safeKey}_chunk_${i}`);
+        }
+      }
+    } catch (e) {
+      // Not chunked JSON metadata
+    }
+  }
+  
+  await SecureStore.deleteItemAsync(safeKey);
+}
+
 /**
  * A storage object that implements the AsyncStorage interface expected by
  * @supabase/supabase-js and can be used as a drop-in replacement anywhere
@@ -48,7 +110,7 @@ const secureStorage = {
   async getItem(key) {
     try {
       if (isSensitiveKey(key)) {
-        return await SecureStore.getItemAsync(sanitiseKey(key));
+        return await getSecureItemChunked(key);
       }
       return await AsyncStorage.getItem(key);
     } catch (error) {
@@ -60,7 +122,7 @@ const secureStorage = {
   async setItem(key, value) {
     try {
       if (isSensitiveKey(key)) {
-        await SecureStore.setItemAsync(sanitiseKey(key), value);
+        await setSecureItemChunked(key, value);
       } else {
         await AsyncStorage.setItem(key, value);
       }
@@ -72,7 +134,7 @@ const secureStorage = {
   async removeItem(key) {
     try {
       if (isSensitiveKey(key)) {
-        await SecureStore.deleteItemAsync(sanitiseKey(key));
+        await removeSecureItemChunked(key);
       } else {
         await AsyncStorage.removeItem(key);
       }

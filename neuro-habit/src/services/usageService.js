@@ -559,15 +559,11 @@ export const usageService = {
           if (e.isBindingError) {
             _hcBindingErrorCount++;
             _hcInitPromise = null; // force re-init on the next attempt
-            if (_hcBindingErrorCount >= HC_MAX_BINDING_ERRORS) {
-              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
-              isHealthConnectEnabled = false;
-              break;
-            } else {
-              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount}/${HC_MAX_BINDING_ERRORS} (${e.originalMessage}) — retrying internally...`);
-              await new Promise(resolve => setTimeout(resolve, 300));
-              continue; // Retry loop
-            }
+            // Runtime evidence shows retries/re-inits do not recover from this
+            // native binding failure in-session; fail fast to fallback.
+            console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
+            isHealthConnectEnabled = false;
+            break;
           } else {
             console.warn('[Steps] HC read error (non-binding):', e.message);
             break; // Non-binding error, stop trying

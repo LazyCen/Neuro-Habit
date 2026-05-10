@@ -38,7 +38,7 @@ export default function InsightsScreen() {
         // internally — do NOT add a separate baseline here or steps will be
         // double-counted, causing inflated and then resetting step counts.
         const sub = usageService.watchLiveSteps((total) => {
-          setLiveSteps(total >= 5 ? total : 0);
+          setLiveSteps(total > 0 ? total : 0);
         });
         liveStepSubscriptionRef.current = sub;
       } catch (e) {
@@ -55,7 +55,7 @@ export default function InsightsScreen() {
     };
   }, []);
 
-  const currentDashboardSteps = data?.steps > 0 ? data.steps : liveSteps;
+  const currentDashboardSteps = Math.max(data?.steps || 0, liveSteps || 0);
 
   // Compute a human-readable date range label for the last 7 days ending at endDate
   const formatDateRange = React.useCallback(() => {
