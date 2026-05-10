@@ -12,6 +12,10 @@ let HealthConnect = null;
 let isHealthConnectEnabled = true;
 let _hcInitPromise = null;
 
+/** Consecutive binding-error counter — HC is only disabled after HC_MAX_BINDING_ERRORS failures */
+let _hcBindingErrorCount = 0;
+const HC_MAX_BINDING_ERRORS = 3;
+
 /** Accumulated live-step delta since the watcher started this session */
 let _liveStepAccumulator = 0;
 let _liveStepSubscription = null;
@@ -65,6 +69,7 @@ const GRAVITY_EARTH      = 9.81;
 export async function resetHealthConnectStatus() {
   isHealthConnectEnabled = true;
   _hcInitPromise  = null;
+  _hcBindingErrorCount = 0; // clear consecutive failure count so HC gets a fresh start
   console.log('[usageService] Health Connect status reset (in-memory).');
 }
 
@@ -88,7 +93,7 @@ async function getHealthConnectClient() {
       console.log('[usageService] HealthConnect.initialize() result:', initialized);
       if (initialized) {
         // Give the service a moment to fully bind before we call into it
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await new Promise(resolve => setTimeout(resolve, 500));
         return HealthConnect;
       }
       return null;
@@ -120,9 +125,11 @@ async function safeNativeCall(operation) {
       msg.includes('ipc');
 
     if (isBindingError) {
+      console.warn(`[safeNativeCall] Detected binding/service error: ${msg}`);
       // Attach a flag so callers can detect this specific failure mode
       const err = new Error(e.message || 'Binding error');
       err.isBindingError = true;
+      err.originalMessage = msg;
       throw err;
     }
     throw e;
@@ -149,6 +156,7 @@ async function readHCStepsOnce(client, startOfDay, now) {
       
       // Try multiple common result keys used by different versions/providers
       const count = aggregate?.count ?? 
+                    aggregate?.COUNT_TOTAL ??
                     aggregate?.steps ?? 
                     aggregate?.['steps.count'] ?? 
                     aggregate?.totalSteps ?? 
@@ -161,8 +169,8 @@ async function readHCStepsOnce(client, startOfDay, now) {
       // If aggregate returned 0, it might be an empty bucket or a sync delay.
       // We'll proceed to Attempt B just in case.
     } catch (e) {
-      if (e.isBindingError) throw e; 
-      console.warn('[Steps] HC aggregateRecord non-binding error:', e.message);
+      console.warn(`[Steps] HC aggregateRecord failed (${e.message}). Falling back to readRecords...`);
+      // Do not throw here, let it try readRecords first.
     }
   }
 
@@ -494,8 +502,8 @@ export const usageService = {
   //
   // Priority:
   //   1. Health Connect (aggregate/readRecords) — most accurate historical data
-  //   2. base (last HC success) + live accumulator — when HC is broken
-  //   3. Live accumulator alone — first session with no prior HC data
+  //   2. base (last successful read) + live accumulator — last resort delta
+  //   3. Live accumulator alone — first run with no prior data of any kind
   // -------------------------------------------------------------------------
   async getDailyStepCount() {
     if (Platform.OS !== 'android') {
@@ -507,47 +515,70 @@ export const usageService = {
 
     // --- Attempt 1: Health Connect ---
     if (isHealthConnectEnabled) {
-      const client = await getHealthConnectClient();
-      if (client) {
+      for (let attempt = 1; attempt <= HC_MAX_BINDING_ERRORS; attempt++) {
+        const client = await getHealthConnectClient();
+        if (!client) break; // If init failed completely, stop trying
+
         const isAuthorized = await this.hasStepPermission();
-        if (isAuthorized) {
-          try {
-            const { value, method } = await readHCStepsOnce(client, startOfDay, now);
-            if (Number.isFinite(value)) {
-              console.log(`[Steps] HC ${method} result: ${value}`);
-              
-              if (value > 0) {
-                // Save as today's base so live delta stays meaningful
-                await saveBaseStepCount(value);
-                return value;
-              } else {
-                console.log('[Steps] HC returned 0. Verifying native permissions...');
-                // If we get 0, double check if it's because permissions were revoked
-                const stillAuthorized = await this.hasStepPermission(true);
-                if (!stillAuthorized) {
-                  console.warn('[Steps] HC permissions revoked! Disabling for this session.');
-                  isHealthConnectEnabled = false;
-                }
+        if (!isAuthorized) {
+          console.log('[Steps] HC not authorized — skipping HC read.');
+          break; // Stop retrying if not authorized
+        }
+
+        try {
+          const { value, method } = await readHCStepsOnce(client, startOfDay, now);
+          if (Number.isFinite(value)) {
+            console.log(`[Steps] HC ${method} result: ${value}`);
+            
+            if (value > 0) {
+              const currentTotal = _baseStepCount + _liveStepAccumulator;
+              if (value > currentTotal) {
+                // HC has steps we missed (e.g. synced from Google Fit). 
+                // Shift the base so currentTotal perfectly matches HC's new value,
+                // without destroying the live accumulator or double counting.
+                const newBase = value - _liveStepAccumulator;
+                await saveBaseStepCount(newBase);
               }
-            }
-          } catch (e) {
-            if (e.isBindingError) {
-              console.warn('[Steps] HC binding error — disabling HC for this session and falling back.');
-              isHealthConnectEnabled = false;
-              _hcInitPromise = null;
+              _hcBindingErrorCount = 0; // successfully read, clear error count
+              
+              // Always return the highest known truth to the API, preventing
+              // downgrades when Health Connect is lagging behind our pedometer.
+              return Math.max(value, currentTotal);
             } else {
-              console.warn('[Steps] HC read error (non-binding):', e.message);
+              console.log('[Steps] HC returned 0. Verifying native permissions...');
+              // If we get 0, double check if it's because permissions were revoked
+              const stillAuthorized = await this.hasStepPermission(true);
+              if (!stillAuthorized) {
+                console.warn('[Steps] HC permissions revoked! Disabling for this session.');
+                isHealthConnectEnabled = false;
+              }
+              break; // Valid read of 0, don't retry
             }
           }
-        } else {
-          console.log('[Steps] HC not authorized — skipping HC read.');
+        } catch (e) {
+          if (e.isBindingError) {
+            _hcBindingErrorCount++;
+            _hcInitPromise = null; // force re-init on the next attempt
+            if (_hcBindingErrorCount >= HC_MAX_BINDING_ERRORS) {
+              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
+              isHealthConnectEnabled = false;
+              break;
+            } else {
+              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount}/${HC_MAX_BINDING_ERRORS} (${e.originalMessage}) — retrying internally...`);
+              await new Promise(resolve => setTimeout(resolve, 300));
+              continue; // Retry loop
+            }
+          } else {
+            console.warn('[Steps] HC read error (non-binding):', e.message);
+            break; // Non-binding error, stop trying
+          }
         }
       }
     }
 
     // --- Attempt 2: base + live accumulator ---
-    // _baseStepCount = last HC success for today
-    // _liveStepAccumulator = steps counted by watcher since it started
+    // _baseStepCount = last successful read (HC or Pedometer historical)
+    // _liveStepAccumulator = steps detected by watcher since app opened
     //
     // If HC managed to read this session before dying, use the HC value directly
     // (already returned above). If not, combine the last known base + live delta.
@@ -609,7 +640,7 @@ export const usageService = {
         lastReported = current;
         callback(current);
       }
-    }, 2000); // poll every 2 s
+    }, 500); // poll every 500 ms for near-instant UI updates
 
     // Fire immediately with current value
     callback(_baseStepCount + _liveStepAccumulator);
@@ -625,6 +656,10 @@ export const usageService = {
     }
   },
 
+  isHealthConnectBroken() {
+    return !isHealthConnectEnabled;
+  },
+
   // Returns raw HC SDK status: 1=not installed, 2=needs update, 3=available, 0=unknown
   async getHcSdkStatus() {
     if (Platform.OS !== 'android' || !HealthConnect) return 0;
@@ -637,6 +672,10 @@ export const usageService = {
 
   async openHealthConnect() {
     if (Platform.OS !== 'android') return;
+    
+    // Reset the internal crash state so the SDK is allowed to initialize
+    // and attempt to open the settings screen.
+    await resetHealthConnectStatus();
 
     // Check SDK status FIRST — redirect to Play Store if HC isn't installed
     if (HealthConnect) {

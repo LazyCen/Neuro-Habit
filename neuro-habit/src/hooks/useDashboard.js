@@ -5,7 +5,7 @@ import { backendService } from "../services/backendService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const DASHBOARD_CACHE_KEY = "dashboard_data_cache_v1";
-const FAST_LOAD_TIMEOUT_MS = 1800;
+const FAST_LOAD_TIMEOUT_MS = 800;
 const DEFAULT_DASHBOARD_DATA = {
   steps: 0,
   screenTime: 0,

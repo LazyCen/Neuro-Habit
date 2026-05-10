@@ -170,10 +170,28 @@ export async function fetchUserData() {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
-    const [screenTime, dailySteps] = await Promise.all([
+
+    // Fast-path: seed today's step count from the on-device cache so the
+    // dashboard shows a real value instantly while HC initialises in the
+    // background. The slow HC path below will overwrite this if it returns
+    // a higher (more accurate) number.
+    let cachedStepsToday = 0;
+    try {
+      const cachedRaw = await AsyncStorage.getItem(DAILY_STEPS_CACHE_KEY);
+      if (cachedRaw) {
+        const { date: cDate, steps: cSteps } = JSON.parse(cachedRaw);
+        if (cDate === new Date().toISOString().slice(0, 10) && Number.isFinite(cSteps)) {
+          cachedStepsToday = cSteps;
+        }
+      }
+    } catch (_e) {}
+
+    const [screenTime, freshSteps] = await Promise.all([
       withTimeout(usageService.getDailyScreenTime(), 3000, 0),
-      withTimeout(usageService.getDailyStepCount(), 5000, 0),
+      withTimeout(usageService.getDailyStepCount(), 3000, 0),
     ]);
+    // Use whichever is higher: the cached today value or the freshly-read value
+    const dailySteps = Math.max(cachedStepsToday, freshSteps);
     console.log('[API] Fetched metrics - Steps:', dailySteps, 'Screen Time:', screenTime);
     let mood = null;
     let habitsCompleted = 0;

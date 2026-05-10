@@ -40,7 +40,7 @@ export default function DashboardScreen() {
   // useDashboard already fires load() automatically on mount; we don't want a
   // second identical fetch half a second later from useFocusEffect.
   const lastRefreshRef = React.useRef(Date.now());
-  const REFRESH_THROTTLE_MS = 3000; // 3 s — prevents duplicate fetches during auth/navigation
+  const REFRESH_THROTTLE_MS = 1500; // 1.5 s — prevents duplicate fetches during auth/navigation
 
   const handleRefresh = React.useCallback(() => {
     const now = Date.now();
@@ -76,18 +76,20 @@ export default function DashboardScreen() {
       if (value === 'true') setDismissedSync(true);
     }).catch(() => {});
 
-    // Start live step watcher as primary fallback when HC binding fails
+    // Start live step watcher — runs continuously and always takes priority
+    // when it reports a value higher than the last HC/cached reading.
     const startLiveSteps = async () => {
       try {
         // Request pedometer permission first
         await usageService.requestPedometerPermission();
 
-        // watchLiveSteps already returns (_baseStepCount + _liveStepAccumulator)
-        // internally — do NOT add a separate baseline here or steps will be
-        // double-counted, causing the "284 → 184" reset bug.
+        // watchLiveSteps returns (_baseStepCount + _liveStepAccumulator).
+        // We accept any positive reading — the base alone (e.g. 375) is valid
+        // and should never be suppressed by the old >= 5 guard.
         const sub = usageService.watchLiveSteps((total) => {
-          // total = _baseStepCount + _liveStepAccumulator from usageService
-          setLiveSteps(total >= 5 ? total : 0);
+          if (total > 0) {
+            setLiveSteps(total);
+          }
         });
         liveStepSubscriptionRef.current = sub;
       } catch (e) {
@@ -360,39 +362,54 @@ export default function DashboardScreen() {
               <Ionicons name="fitness" size={24} color={colors.green} />
             </View>
             <View style={themedStyles.heroBody}>
-            <Text style={themedStyles.heroValue}>
-              {(data.steps > 0 ? data.steps : liveSteps).toLocaleString()}
-            </Text>
-            <Text style={themedStyles.heroLabel}>
-              {data.steps > 0 ? 'Steps today' : liveSteps > 0 ? 'Steps (live)' : 'Steps today'}
-            </Text>
-            {liveSteps > 0 && data.steps === 0 && (
-              <View style={{ marginTop: 8 }}>
-                <Text style={{ color: colors.subtext, fontSize: 11 }}>
-                  Live tracking active — historical sync unavailable
-                </Text>
-                <TouchableOpacity 
-                  onPress={() => usageService.openHealthConnect()}
-                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
-                >
-                  <Text style={{ color: colors.primary, fontSize: 11, fontWeight: 'bold' }}>
-                    Troubleshoot Sync
+            {/* Always show the highest value from either HC (data.steps) or live
+                pedometer (_baseStepCount + _liveStepAccumulator). This ensures
+                the number advances in real-time even when HC is cached/stale. */}
+            {(() => {
+              const displaySteps = Math.max(data.steps || 0, liveSteps || 0);
+              const isLiveAhead = liveSteps > (data.steps || 0);
+              const isZero = displaySteps === 0;
+              const isHcBroken = usageService.isHealthConnectBroken && usageService.isHealthConnectBroken();
+              const needsTroubleshoot = isHcBroken;
+              
+              return (
+                <>
+                  <Text style={themedStyles.heroValue}>
+                    {displaySteps.toLocaleString()}
                   </Text>
-                  <Ionicons name="chevron-forward" size={10} color={colors.primary} style={{ marginLeft: 2 }} />
-                </TouchableOpacity>
-              </View>
-            )}
-            {data.steps === 0 && liveSteps === 0 && (
-              <TouchableOpacity 
-                onPress={() => usageService.openHealthConnect()}
-                style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }}
-              >
-                <Ionicons name="help-circle-outline" size={14} color={colors.subtext} />
-                <Text style={{ color: colors.subtext, fontSize: 11, marginLeft: 4 }}>
-                  Why is this 0? Check Health Connect
-                </Text>
-              </TouchableOpacity>
-            )}
+                  <Text style={themedStyles.heroLabel}>
+                    {isZero ? 'Steps today' : isLiveAhead ? 'Steps (live)' : 'Steps today'}
+                  </Text>
+                  {needsTroubleshoot && !isZero && (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={{ color: colors.subtext, fontSize: 11 }}>
+                        Sync interrupted — tap to restart Health Connect
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => usageService.openHealthConnect()}
+                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+                      >
+                        <Text style={{ color: colors.primary, fontSize: 11, fontWeight: 'bold' }}>
+                          Troubleshoot Sync
+                        </Text>
+                        <Ionicons name="chevron-forward" size={10} color={colors.primary} style={{ marginLeft: 2 }} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {isZero && (
+                    <TouchableOpacity
+                      onPress={() => usageService.openHealthConnect()}
+                      style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }}
+                    >
+                      <Ionicons name="help-circle-outline" size={14} color={colors.subtext} />
+                      <Text style={{ color: colors.subtext, fontSize: 11, marginLeft: 4 }}>
+                        Why is this 0? Check Health Connect
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              );
+            })()}
           </View>
           </Card>
         </Animated.View>
