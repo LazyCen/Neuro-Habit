@@ -24,8 +24,10 @@ let _watcherStarting = false;  // Synchronous guard to prevent double-start duri
 // Base step count loaded from AsyncStorage at session start (from last HC sync)
 let _baseStepCount = 0;
 
-const STORAGE_KEY_BASE_STEPS = '@NeuroHabit:BaseStepCount';
 const STORAGE_KEY_BASE_DATE  = '@NeuroHabit:BaseStepDate';
+
+/** Tracks the last date we processed to detect midnight rollover during a session */
+let _lastProcessedDate = '';
 
 // NOTE: HC crash state is intentionally NOT persisted across sessions.
 // isHealthConnectEnabled=false is in-memory only — HC always gets one
@@ -225,14 +227,18 @@ async function loadBaseStepCount() {
   try {
     const savedDate  = await AsyncStorage.getItem(STORAGE_KEY_BASE_DATE);
     const savedCount = await AsyncStorage.getItem(STORAGE_KEY_BASE_STEPS);
-    if (savedDate === todayString() && savedCount !== null) {
+    const currentDay = todayString();
+
+    if (savedDate === currentDay && savedCount !== null) {
       _baseStepCount   = parseInt(savedCount, 10) || 0;
       console.log(`[usageService] Loaded persisted base steps: ${_baseStepCount}`);
     } else {
       _baseStepCount = 0;
     }
+    _lastProcessedDate = savedDate || currentDay;
   } catch (_e) {
     _baseStepCount = 0;
+    _lastProcessedDate = todayString();
   }
 }
 
@@ -245,6 +251,52 @@ async function saveBaseStepCount(count) {
     ]);
     _baseStepCount    = count;
   } catch (_e) { /* non-fatal */ }
+}
+
+/** 
+ * Checks if the day has changed since the last step read.
+ * If so, resets all in-memory and persisted step counters to zero.
+ */
+async function checkDateRollover() {
+  const currentDay = todayString();
+
+  if (!_lastProcessedDate) {
+    _lastProcessedDate = currentDay;
+    return;
+  }
+
+  if (_lastProcessedDate !== currentDay) {
+    console.log(`[usageService] Day rollover detected: ${_lastProcessedDate} -> ${currentDay}. Resetting step counters.`);
+    
+    // 1. Update session date tracking
+    _lastProcessedDate = currentDay;
+
+    // 2. Reset in-memory accumulators
+    _baseStepCount = 0;
+    _liveStepAccumulator = 0;
+    
+    // 3. Reset persisted state for the new day
+    try {
+      await AsyncStorage.multiSet([
+        [STORAGE_KEY_BASE_STEPS, '0'],
+        [STORAGE_KEY_BASE_DATE,  currentDay],
+      ]);
+    } catch (_e) { /* ignore */ }
+
+    // 4. Force restart the live watcher to reset its internal delta
+    if (_liveStepSubscription) {
+      console.log('[usageService] Restarting live watcher for new day.');
+      try {
+        if (typeof _liveStepSubscription.remove === 'function') {
+          _liveStepSubscription.remove();
+        } else if (typeof _liveStepSubscription === 'function') {
+          _liveStepSubscription();
+        }
+      } catch (_e) { /* ignore */ }
+      _liveStepSubscription = null;
+    }
+    ensureLiveWatcher();
+  }
 }
 
 /** Start the live pedometer watcher once and accumulate steps */
@@ -518,6 +570,9 @@ export const usageService = {
       return this._getDailyStepCountIOS();
     }
 
+    // Ensure we aren't returning yesterday's steps if the app stayed open across midnight
+    await checkDateRollover();
+
     const now        = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -645,7 +700,8 @@ export const usageService = {
     // Seed with the same expression used inside the interval so the very first
     // poll does not always fire a spurious "change" event.
     let lastReported = _baseStepCount + _liveStepAccumulator;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
+      await checkDateRollover();
       const current = _baseStepCount + _liveStepAccumulator;
       if (current !== lastReported) {
         lastReported = current;
