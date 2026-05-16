@@ -213,7 +213,6 @@ async function safeNativeCall(operation) {
       msg.includes('ipc');
 
     if (isBindingError) {
-      console.warn(`[safeNativeCall] Detected binding/service error: ${msg}`);
       // Attach a flag so callers can detect this specific failure mode
       const err = new Error(e.message || 'Binding error');
       err.isBindingError = true;
@@ -667,24 +666,88 @@ export const usageService = {
       const now        = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-      let stats = await UsageStats.queryUsageStats({
-        startTime: startOfDay.getTime(),
-        endTime:   now.getTime(),
-        interval:  INTERVAL_DAILY,
-      });
+      let totalMs = 0;
+      let usedEvents = false;
+      
+      const SYSTEM_PREFIXES = [
+        'com.android.',
+        'android',
+        'com.google.android.apps.nexuslauncher',
+        'com.sec.android.app.launcher',
+        'com.miui.home',
+        'com.huawei.android.launcher',
+        'com.oppo.launcher',
+        'com.vivo.launcher',
+        'com.oneplus.setupwizard',
+        'com.google.android.gms'
+      ];
 
-      if (!Array.isArray(stats) || stats.length === 0) {
+      try {
+        const events = await UsageStats.queryEvents({
+          startTime: startOfDay.getTime(),
+          endTime: now.getTime()
+        });
+
+        // The API call succeeded. Even if events is null/undefined (0 events),
+        // we must NOT fall back to the inaccurate daily buckets.
+        usedEvents = true;
+
+        if (Array.isArray(events) && events.length > 0) {
+          const ACTIVITY_RESUMED = 1;
+          const ACTIVITY_PAUSED = 2;
+          let resumedMap = new Map();
+
+          events.sort((a, b) => a.timeStamp - b.timeStamp);
+
+          for (const event of events) {
+            const pkg = (event.packageName || '').toLowerCase();
+            const isSystem = SYSTEM_PREFIXES.some(prefix => pkg.startsWith(prefix));
+            
+            // Only track non-system apps for exact user screen time
+            if (!isSystem) {
+              if (event.eventType === ACTIVITY_RESUMED) {
+                resumedMap.set(pkg, event.timeStamp);
+              } else if (event.eventType === ACTIVITY_PAUSED) {
+                if (resumedMap.has(pkg)) {
+                  totalMs += (event.timeStamp - resumedMap.get(pkg));
+                  resumedMap.delete(pkg);
+                } else {
+                  // App was already active before midnight; cap it to the start of the day
+                  totalMs += (event.timeStamp - startOfDay.getTime());
+                }
+              }
+            }
+          }
+
+          // Add ongoing time for any apps still active right now
+          for (const [pkg, timeStamp] of resumedMap.entries()) {
+            totalMs += (now.getTime() - timeStamp);
+          }
+        }
+      } catch (err) {
+        // Silently catch on Android < 12 (API 31) where react-native-usage-stats crashes 
+        // attempting to read UsageEvents$Event.getExtras(). The fallback logic below will handle it.
+      }
+
+      if (!usedEvents) {
+        // Fallback: This is less accurate across midnight boundaries due to Android's daily buckets.
         const aggregateMap = await UsageStats.queryAndAggregateUsageStats({
           startTime: startOfDay.getTime(),
-          endTime:   now.getTime(),
+          endTime: now.getTime(),
         });
-        stats = aggregateMap ? Object.values(aggregateMap) : [];
+        const stats = aggregateMap ? Object.values(aggregateMap) : [];
+
+        if (Array.isArray(stats)) {
+          stats.forEach(app => {
+            const pkg = (app.packageName || '').toLowerCase();
+            const isSystem = SYSTEM_PREFIXES.some(prefix => pkg.startsWith(prefix));
+            if (!isSystem && app.totalTimeInForeground > 0) {
+              totalMs += app.totalTimeInForeground;
+            }
+          });
+        }
       }
 
-      let totalMs = 0;
-      if (Array.isArray(stats)) {
-        stats.forEach(app => { totalMs += (app.totalTimeInForeground || 0); });
-      }
       return parseFloat((totalMs / (1000 * 60 * 60)).toFixed(2));
     } catch (e) {
       console.error('[usageService] getDailyScreenTime error:', e);
@@ -778,19 +841,19 @@ export const usageService = {
             // more time to recover the binder interface between retries.
             if (_hcBindingErrorCount < HC_MAX_BINDING_ERRORS) {
               const backoffMs = _hcBindingErrorCount * 1500; // Increased from 800ms
-              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} — waiting ${backoffMs}ms before retry...`);
+              console.log(`[Steps] HC binding error x${_hcBindingErrorCount} — waiting ${backoffMs}ms before retry...`);
               await new Promise(resolve => setTimeout(resolve, backoffMs));
               
               // Exponentially increase settle time for next init attempt
               _hcInitSettleMs = Math.min(_hcInitSettleMs + 1000, 4000);
             } else {
-              console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
+              console.log(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
               isHealthConnectEnabled = false;
               scheduleHcRetry(); // give HC a silent second chance after the OS settles
               break;
             }
           } else {
-            console.warn('[Steps] HC read error (non-binding):', e.message);
+            console.log('[Steps] HC read error (non-binding):', e.message);
             break; // Non-binding error, stop trying
           }
         }
@@ -904,8 +967,9 @@ export const usageService = {
           _pollHcBindingErrors++;
           _hcInitPromise = null; // force re-init next attempt
           if (_pollHcBindingErrors >= POLL_HC_MAX_ERRORS) {
-            console.warn('[watchLiveSteps] HC background poll persistently failing — disabling HC for this session.');
-            isHealthConnectEnabled = false;
+            console.log('[watchLiveSteps] HC background poll binder error — will continue trying silently.');
+            // Reset counter to prevent spamming logs every 30s
+            _pollHcBindingErrors = 0;
           }
         }
         // All other errors are swallowed — polling must never crash the watcher
