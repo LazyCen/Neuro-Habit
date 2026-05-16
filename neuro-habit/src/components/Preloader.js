@@ -118,13 +118,7 @@ export default function Preloader() {
           </View>
         </Animated.View>
 
-        {/* Text Section */}
-        <Animated.View style={{ opacity: opacity.value, alignItems: 'center', marginTop: 50 }}>
-          <Text style={[styles.title, { 
-            color: theme.text,
-            textShadowColor: theme.primary + (isDark ? '80' : '33')
-          }]}>Neuro Habit</Text>
-        </Animated.View>
+
       </View>
     </View>
   );

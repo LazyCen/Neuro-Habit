@@ -607,8 +607,6 @@ const styles = (colors) => StyleSheet.create({
     fontSize: 32,
     fontWeight: "bold",
     color: colors.text,
-    marginBottom: 24,
-    marginTop: 20,
     flex: 1,
   },
   titleRow: {

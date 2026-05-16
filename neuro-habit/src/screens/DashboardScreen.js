@@ -398,8 +398,6 @@ export default function DashboardScreen() {
               const displaySteps = Math.max(data.steps || 0, liveSteps || 0);
               const isLiveAhead = liveSteps > (data.steps || 0);
               const isZero = displaySteps === 0;
-              const isHcBroken = usageService.isHealthConnectBroken && usageService.isHealthConnectBroken();
-              const needsTroubleshoot = isHcBroken;
               
               return (
                 <>
@@ -409,22 +407,6 @@ export default function DashboardScreen() {
                   <Text style={themedStyles.heroLabel}>
                     {isZero ? 'Steps today' : isLiveAhead ? 'Steps (live)' : 'Steps today'}
                   </Text>
-                  {needsTroubleshoot && !isZero && (
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={{ color: colors.subtext, fontSize: 11 }}>
-                        Sync interrupted — tap to restart Health Connect
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => usageService.openHealthConnect()}
-                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
-                      >
-                        <Text style={{ color: colors.primary, fontSize: 11, fontWeight: 'bold' }}>
-                          Troubleshoot Sync
-                        </Text>
-                        <Ionicons name="chevron-forward" size={10} color={colors.primary} style={{ marginLeft: 2 }} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
                   {isZero && (
                     <TouchableOpacity
                       onPress={() => usageService.openHealthConnect()}

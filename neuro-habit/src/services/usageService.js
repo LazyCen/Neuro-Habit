@@ -16,6 +16,34 @@ let _hcInitPromise = null;
 let _hcBindingErrorCount = 0;
 const HC_MAX_BINDING_ERRORS = 3;
 
+/**
+ * One-shot background retry flag. After startup binding errors disable HC,
+ * we schedule a single silent retry after 10 s to let the OS fully bind the
+ * HC service. If the retry ALSO fails, we give up permanently for this session
+ * to avoid an infinite retry → bind-fail → retry loop on fragile devices.
+ */
+let _hcRetryScheduled = false;
+let _hcSilentRetryDone = false; // permanent session-level gate — retry at most once
+
+function scheduleHcRetry() {
+  // Only schedule one silent retry per app session.
+  // On devices where HC consistently fails (e.g. Infinix with aggressive
+  // battery optimization) the binder will never stabilize, so retrying
+  // indefinitely just wastes CPU and creates noisy warning logs.
+  if (_hcRetryScheduled || _hcSilentRetryDone) return;
+  _hcRetryScheduled = true;
+  _hcSilentRetryDone = true; // prevent any further retries this session
+  console.log('[usageService] HC disabled at startup — scheduling silent retry in 10 s.');
+  setTimeout(() => {
+    _hcRetryScheduled = false; // flag cleared but _hcSilentRetryDone remains true
+    isHealthConnectEnabled = true;
+    _hcInitPromise = null;
+    _hcBindingErrorCount = 0;
+    _hcInitSettleMs = 4000; // maximum settle time for the one silent retry
+    console.log('[usageService] HC silent retry: re-enabled for background attempt.');
+  }, 10000);
+}
+
 /** Accumulated live-step delta since the watcher started this session */
 let _liveStepAccumulator = 0;
 let _liveStepSubscription = null;
@@ -25,6 +53,7 @@ let _watcherStarting = false;  // Synchronous guard to prevent double-start duri
 let _baseStepCount = 0;
 
 const STORAGE_KEY_BASE_DATE  = '@NeuroHabit:BaseStepDate';
+const STORAGE_KEY_BASE_STEPS = '@NeuroHabit:BaseStepCount';
 
 /** Tracks the last date we processed to detect midnight rollover during a session */
 let _lastProcessedDate = '';
@@ -79,15 +108,69 @@ export async function resetHealthConnectStatus() {
 // HC client init — singleton promise with re-init support
 // ---------------------------------------------------------------------------
 /** Delay (ms) to wait after HC initialize() before making API calls */
-let _hcInitSettleMs = 1200; // increased for slow-binding devices like Infinix
+let _hcInitSettleMs = 2500; // raised: gives slow-binding OEM devices more time
+
+// ---------------------------------------------------------------------------
+// HC API serialization lock
+// Concurrent Android IPC calls on the same binder kill the connection
+// ("binding died" / "binding to service failed"). This mutex ensures only
+// ONE HC API call is in-flight at any moment.
+// ---------------------------------------------------------------------------
+let _hcApiLockTail = Promise.resolve();
+
+/**
+ * Runs `fn` exclusively after all previous HC API calls have resolved.
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withHcLock(fn) {
+  let release;
+  const myTurn = new Promise(resolve => { release = resolve; });
+  const prevTail = _hcApiLockTail;
+  _hcApiLockTail = myTurn;
+  try {
+    await prevTail;
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Safely starts local step counting mechanisms (Pedometer/Accelerometer)
+ * when Health Connect is completely unavailable due to API version constraints.
+ */
+function startLocalStepFallback() {
+  console.log('[usageService] Activating local step fallback routine.');
+  ensureLiveWatcher();
+}
 
 async function getHealthConnectClient() {
   if (!HealthConnect || !isHealthConnectEnabled) return null;
+
+  // Strictly gate Health Connect for Android 8.0+ (API 26+)
+  // Executing HC APIs on API 24/25 causes fatal runtime crashes.
+  if (Platform.OS === 'android' && Platform.Version < 26) {
+    console.log('[usageService] Device API level is below 26. Silently bypassing Health Connect to ensure backward compatibility.');
+    startLocalStepFallback();
+    return null;
+  }
 
   if (_hcInitPromise) return _hcInitPromise;
 
   _hcInitPromise = (async () => {
     try {
+      // Staggered Lifecycle Lock: Delay initial HC binding by 3.5s
+      // Ensures Supabase Auth context, time sync, and Dashboard mount
+      // fully settle before spinning up the heavy IPC native connection.
+      // Prevents "binding died" on aggressive OEM skins (e.g. Infinix).
+      if (!global._hcAppStartupBufferDone) {
+        console.log('[usageService] Staggering HC init: waiting 3500ms for UI/Auth to settle...');
+        await new Promise(resolve => setTimeout(resolve, 3500));
+        global._hcAppStartupBufferDone = true;
+      }
+
       const status = await HealthConnect.getSdkStatus();
       if (status !== HC_SDK_AVAILABLE) {
         console.warn(`[usageService] HC SDK not available. Status: ${status}`);
@@ -148,23 +231,26 @@ async function readHCStepsOnce(client, startOfDay, now) {
   // Attempt A: aggregateRecord (more reliable, one call)
   if (typeof client.aggregateRecord === 'function') {
     try {
-      const aggregate = await safeNativeCall(() => client.aggregateRecord({
+      const aggregate = await withHcLock(() => safeNativeCall(() => client.aggregateRecord({
         recordType: 'Steps',
         timeRangeFilter: {
           operator: 'between',
           startTime: startOfDay.toISOString(),
           endTime:   now.toISOString(),
         },
-      }));
+      })));
       
       console.log('[Steps] HC aggregate raw:', JSON.stringify(aggregate));
       
-      // Try multiple common result keys used by different versions/providers
-      const count = aggregate?.count ?? 
-                    aggregate?.COUNT_TOTAL ??
-                    aggregate?.steps ?? 
-                    aggregate?.['steps.count'] ?? 
-                    aggregate?.totalSteps ?? 
+      // COUNT_TOTAL must come FIRST — on some devices/versions the aggregate
+      // object also contains a `count` field that equals the number of record
+      // sources (e.g. 1), NOT the step total. Checking COUNT_TOTAL first
+      // prevents that field from being mistakenly used as the step count.
+      const count = aggregate?.COUNT_TOTAL ??
+                    aggregate?.steps ??
+                    aggregate?.['steps.count'] ??
+                    aggregate?.totalSteps ??
+                    aggregate?.count ??
                     0;
 
       if (Number.isFinite(count) && count > 0) {
@@ -174,26 +260,21 @@ async function readHCStepsOnce(client, startOfDay, now) {
       // If aggregate returned 0, it might be an empty bucket or a sync delay.
       // We'll proceed to Attempt B just in case.
     } catch (e) {
-      if (e.isBindingError) {
-        // Propagate binding error immediately — no point trying readRecords
-        // since the service connection is already broken.
-        throw e;
-      }
+      if (e.isBindingError) throw e;
       console.warn(`[Steps] HC aggregateRecord failed (${e.message}). Falling back to readRecords...`);
-      // Non-binding error — try readRecords before giving up
     }
   }
 
   // Attempt B: readRecords (fallback if aggregate is 0 or had non-binding error)
   if (typeof client.readRecords === 'function') {
     try {
-      const result = await safeNativeCall(() => client.readRecords('Steps', {
+      const result = await withHcLock(() => safeNativeCall(() => client.readRecords('Steps', {
         timeRangeFilter: {
           operator: 'between',
           startTime: startOfDay.toISOString(),
           endTime:   now.toISOString(),
         },
-      }));
+      })));
       const records = Array.isArray(result?.records) ? result.records : [];
       const total = records.reduce((sum, r) => {
         const v = r?.count ?? r?.steps ?? 0;
@@ -348,9 +429,63 @@ function ensureLiveWatcher() {
 // Re-start the watcher if it was somehow stopped (e.g. native crash) when
 // the app returns to foreground. We do NOT stop it on background — the
 // pedometer sensor is cheap and we'd lose the accumulated count.
+//
+// Also kick off an immediate HC re-poll on foreground so steps synced
+// by Google Fit / wearables while the app was in the background are
+// picked up instantly instead of waiting for the next 30-second interval.
+let _lastForegroundHcPoll = 0;
+const FOREGROUND_HC_POLL_THROTTLE_MS = 15_000; // at most once per 15 s
+
+// Module load timestamp — used to enforce an 8-second startup quiesce window.
+// During the 3.5s HC init stagger, devices can briefly emit 'inactive' then
+// 'active' (screen-on, notification, etc.) which sets _hasBeenBackgrounded=true
+// prematurely, allowing the foreground poll to race with getDailyStepCount().
+// The quiesce window is a hard wall: no foreground HC poll fires in the first 8s
+// regardless of AppState transitions.
+const _moduleLoadTime = Date.now();
+const HC_STARTUP_QUIESCE_MS = 8_000;
+
+let _hasBeenBackgrounded = false;
+
 AppState.addEventListener('change', (state) => {
+  if (state === 'background' || state === 'inactive') {
+    _hasBeenBackgrounded = true;
+  }
+
   if (state === 'active') {
     ensureLiveWatcher();
+
+    // Guard 1: hard startup quiesce — never fire within the first 8 seconds
+    if (Date.now() - _moduleLoadTime < HC_STARTUP_QUIESCE_MS) return;
+
+    // Guard 2: must have actually been backgrounded (not just permission dialogs)
+    if (!_hasBeenBackgrounded) return;
+
+    // Guard 3: skip if HC is currently disabled for this session
+    if (!isHealthConnectEnabled) return;
+
+    // Throttled HC re-poll on foreground
+    const now = Date.now();
+    if (now - _lastForegroundHcPoll > FOREGROUND_HC_POLL_THROTTLE_MS) {
+      _lastForegroundHcPoll = now;
+      (async () => {
+        try {
+          const client = await getHealthConnectClient();
+          if (!client) return;
+          const nowDate    = new Date();
+          const startOfDay = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+          const { value }  = await readHCStepsOnce(client, startOfDay, nowDate);
+          if (Number.isFinite(value) && value > 0) {
+            const currentTotal = _baseStepCount + _liveStepAccumulator;
+            if (value > currentTotal) {
+              const newBase = value - _liveStepAccumulator;
+              await saveBaseStepCount(newBase);
+              console.log(`[usageService] Foreground HC poll updated base: ${_baseStepCount} (HC=${value})`);
+            }
+          }
+        } catch (_e) { /* silent — foreground poll errors must not surface to UI */ }
+      })();
+    }
   }
 });
 
@@ -430,7 +565,7 @@ export const usageService = {
 
       if (typeof client.getGrantedPermissions !== 'function') return false;
 
-      const granted = await safeNativeCall(() => client.getGrantedPermissions());
+      const granted = await withHcLock(() => safeNativeCall(() => client.getGrantedPermissions()));
       const isGranted = Array.isArray(granted) && (
         granted.some(p => p?.recordType === 'Steps' || p?.recordType === 'steps' || p === 'Steps' || p === 'steps')
       );
@@ -459,11 +594,11 @@ export const usageService = {
     if (client && typeof client.requestPermission === 'function') {
       try {
         console.log('[usageService] Requesting Health Connect permissions...');
-        const granted = await safeNativeCall(() => client.requestPermission([
+        const granted = await withHcLock(() => safeNativeCall(() => client.requestPermission([
           { accessType: 'read', recordType: 'Steps' },
           { accessType: 'read', recordType: 'Distance' },
           { accessType: 'read', recordType: 'TotalCaloriesBurned' },
-        ]));
+        ])));
         healthConnectGranted = Array.isArray(granted) && (
           granted.some(item => item?.recordType === 'Steps' || item === 'Steps')
         );
@@ -564,11 +699,27 @@ export const usageService = {
   //   1. Health Connect (aggregate/readRecords) — most accurate historical data
   //   2. base (last successful read) + live accumulator — last resort delta
   //   3. Live accumulator alone — first run with no prior data of any kind
+  //
+  // Concurrent callers (dashboard, background fetch, 30 s watcher) share the
+  // same in-flight promise so only ONE HC IPC read ever runs at a time.
   // -------------------------------------------------------------------------
   async getDailyStepCount() {
     if (Platform.OS !== 'android') {
       return this._getDailyStepCountIOS();
     }
+    // Deduplicate: return the existing promise if a read is already in-flight
+    if (this._pendingStepRead) {
+      console.log('[Steps] Deduplicating concurrent getDailyStepCount call.');
+      return this._pendingStepRead;
+    }
+    this._pendingStepRead = this._doGetDailyStepCount().finally(() => {
+      this._pendingStepRead = null;
+    });
+    return this._pendingStepRead;
+  },
+
+  async _doGetDailyStepCount() {
+    if (Platform.OS !== 'android') return this._getDailyStepCountIOS();
 
     // Ensure we aren't returning yesterday's steps if the app stayed open across midnight
     await checkDateRollover();
@@ -622,16 +773,20 @@ export const usageService = {
           if (e.isBindingError) {
             _hcBindingErrorCount++;
             _hcInitPromise = null; // force re-init on the next attempt
-            // Add a short backoff between re-init attempts to let the OS recover
+            
+            // Robust Exponential Backoff: give aggressive OS skins significantly
+            // more time to recover the binder interface between retries.
             if (_hcBindingErrorCount < HC_MAX_BINDING_ERRORS) {
-              const backoffMs = _hcBindingErrorCount * 800;
+              const backoffMs = _hcBindingErrorCount * 1500; // Increased from 800ms
               console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} — waiting ${backoffMs}ms before retry...`);
               await new Promise(resolve => setTimeout(resolve, backoffMs));
-              // Increase settle time for next init attempt
-              _hcInitSettleMs = Math.min(_hcInitSettleMs + 500, 3000);
+              
+              // Exponentially increase settle time for next init attempt
+              _hcInitSettleMs = Math.min(_hcInitSettleMs + 1000, 4000);
             } else {
               console.warn(`[Steps] HC binding error x${_hcBindingErrorCount} (${e.originalMessage}) — disabling HC for this session and falling back.`);
               isHealthConnectEnabled = false;
+              scheduleHcRetry(); // give HC a silent second chance after the OS settles
               break;
             }
           } else {
@@ -690,17 +845,79 @@ export const usageService = {
   // The internal watcher (_liveStepSubscription) already runs continuously;
   // this method gives callers a way to receive updates without starting
   // a second watcher.
+  //
+  // A second, slower interval (HC_POLL_INTERVAL_MS) periodically re-queries
+  // Health Connect so that steps synced from Google Fit, wearables, or other
+  // sources are automatically reflected without a manual refresh.
   // -------------------------------------------------------------------------
   watchLiveSteps(callback) {
     // Ensure the persistent watcher is running
     ensureLiveWatcher();
+
+    const HC_POLL_INTERVAL_MS = 30_000; // re-query HC every 30 s
+
+    // ---------------------------------------------------------------------------
+    // pollHC — isolated binding-error counter (MUST NOT touch _hcBindingErrorCount)
+    //
+    // _hcBindingErrorCount is exclusively owned by _doGetDailyStepCount's retry
+    // loop. Sharing it caused a race: pollHC fired at ~12 s while the main retry
+    // was at attempt 3 (~14 s), prematurely incrementing the shared counter from
+    // x2 → x3, so the main loop logged "x4" instead of "x3" and called
+    // scheduleHcRetry twice. Using a scoped counter keeps the two code paths
+    // completely independent.
+    // ---------------------------------------------------------------------------
+    let _pollHcBindingErrors = 0;
+    const POLL_HC_MAX_ERRORS = 3; // independent threshold for background poll
+
+    /** Silent background re-poll of Health Connect.
+     *  If HC returns a value higher than the current base+live total, we
+     *  shift the base up so the UI reflects the freshly-synced reading.
+     *  Uses its own binding-error counter so it cannot race with the main
+     *  getDailyStepCount retry loop. */
+    const pollHC = async () => {
+      if (!isHealthConnectEnabled) return;
+      try {
+        const client = await getHealthConnectClient();
+        // Re-check after async gap — a parallel failure may have disabled HC
+        if (!client || !isHealthConnectEnabled) return;
+        const isAuthorized = await this.hasStepPermission();
+        if (!isAuthorized) return;
+
+        const now        = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const { value } = await readHCStepsOnce(client, startOfDay, now);
+
+        if (Number.isFinite(value) && value > 0) {
+          const currentTotal = _baseStepCount + _liveStepAccumulator;
+          if (value > currentTotal) {
+            // HC has newer/higher data — shift base up without disturbing live delta
+            const newBase = value - _liveStepAccumulator;
+            await saveBaseStepCount(newBase);
+            console.log(`[watchLiveSteps] HC poll updated base: ${_baseStepCount} (HC=${value})`);
+          }
+          // Successful poll — reset this poll's own error counter
+          _pollHcBindingErrors = 0;
+        }
+      } catch (e) {
+        if (e?.isBindingError) {
+          // Use the scoped counter — never touch _hcBindingErrorCount
+          _pollHcBindingErrors++;
+          _hcInitPromise = null; // force re-init next attempt
+          if (_pollHcBindingErrors >= POLL_HC_MAX_ERRORS) {
+            console.warn('[watchLiveSteps] HC background poll persistently failing — disabling HC for this session.');
+            isHealthConnectEnabled = false;
+          }
+        }
+        // All other errors are swallowed — polling must never crash the watcher
+      }
+    };
 
     // Return a synthetic subscription that polls _liveStepAccumulator
     // and fires the callback whenever the value changes.
     // Seed with the same expression used inside the interval so the very first
     // poll does not always fire a spurious "change" event.
     let lastReported = _baseStepCount + _liveStepAccumulator;
-    const interval = setInterval(async () => {
+    const uiInterval = setInterval(async () => {
       await checkDateRollover();
       const current = _baseStepCount + _liveStepAccumulator;
       if (current !== lastReported) {
@@ -709,11 +926,33 @@ export const usageService = {
       }
     }, 500); // poll every 500 ms for near-instant UI updates
 
+    // HC background poll — initial delay of 25 s.
+    //
+    // Timeline on slow/broken-binder devices:
+    //   t=0       — dashboard mounts, watchLiveSteps called
+    //   t=3.5 s   — HC startup stagger ends, attempt 1 fires
+    //   t=5.0 s   — attempt 1 fails, 1.5 s backoff
+    //   t=10.0 s  — attempt 2 fails (with 2.5 s settle), 3.0 s backoff
+    //   t=16.5 s  — attempt 3 fails (with 3.5 s settle), HC disabled
+    //   t=26.5 s  — silent retry re-enables HC (10 s after disable)
+    //
+    // 25 s was the old "12 s" — too short, it fired during attempt 3's settle
+    // window and raced on the binder. 25 s still fires before the silent retry
+    // completes on fast devices but is safely past the main retry sequence.
+    // On truly broken devices the initial poll check sees isHealthConnectEnabled=false
+    // and returns immediately (no binder hit at all).
+    const hcPollTimeout = setTimeout(() => pollHC(), 25_000);
+    const hcPollInterval = setInterval(() => pollHC(), HC_POLL_INTERVAL_MS);
+
     // Fire immediately with current value
     callback(_baseStepCount + _liveStepAccumulator);
 
     return {
-      remove: () => clearInterval(interval),
+      remove: () => {
+        clearInterval(uiInterval);
+        clearTimeout(hcPollTimeout);
+        clearInterval(hcPollInterval);
+      },
     };
   },
 

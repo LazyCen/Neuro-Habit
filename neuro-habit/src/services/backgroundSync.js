@@ -29,6 +29,11 @@ TaskManager.defineTask(HEALTH_SYNC_TASK, async () => {
 
 export const registerBackgroundHealthSync = async () => {
   try {
+    // Delay registration by 5 s so the background fetch task does not
+    // attempt getDailyStepCount() concurrently with the app's own HC
+    // initialization — a key source of "binding died" IPC errors on cold start.
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
     const isRegistered = await TaskManager.isTaskRegisteredAsync(HEALTH_SYNC_TASK);
     if (!isRegistered) {
       await BackgroundFetch.registerTaskAsync(HEALTH_SYNC_TASK, {

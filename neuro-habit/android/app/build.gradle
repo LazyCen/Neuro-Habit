@@ -110,12 +110,6 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
-            // ─── Dev / Prod coexistence ───────────────────────────────────────
-            // Appending ".dev" makes this a completely different package, so it
-            // installs alongside the release APK instead of replacing it.
-            applicationIdSuffix ".dev"
-            // Show a distinct label on the launcher so you can tell them apart.
-            resValue "string", "app_name", "NeuroHabit (Dev)"
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -138,7 +132,6 @@ android {
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
-
 }
 
 // Apply static values from `gradle.properties` to the `android.packagingOptions`
